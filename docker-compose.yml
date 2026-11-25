@@ -1,0 +1,11 @@
+services:
+  rollentrainer:
+    build: .
+    container_name: rollentrainer
+    restart: unless-stopped
+    ports:
+      # Weboberfläche und App-Schnittstelle: http://<IP>:18420
+      # Anderer Port: Umgebungsvariable RT_PORT setzen, z. B. RT_PORT=19000 docker compose up -d
+      - "${RT_PORT:-18420}:8080"
+    volumes:
+      - ./data:/data

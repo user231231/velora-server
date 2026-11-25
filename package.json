@@ -1,0 +1,12 @@
+{
+  "name": "rollentrainer-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NAS-Server für die Rollentrainer-App: Nutzer, Workouts, Strecken, Favoriten, Fahrten",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}

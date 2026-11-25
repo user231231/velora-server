@@ -1,0 +1,166 @@
+'use strict';
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { createApp } = require('../server');
+
+let server, fake, base, dataDir;
+
+const call = async (method, url, body, headers = {}) => {
+  const isBuf = Buffer.isBuffer(body);
+  const res = await fetch(base + url, {
+    method,
+    headers: body === undefined ? headers : { 'Content-Type': isBuf ? 'application/octet-stream' : 'application/json', ...headers },
+    body: body === undefined ? undefined : isBuf ? body : JSON.stringify(body),
+  });
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
+  return { status: res.status, data, headers: res.headers };
+};
+
+before(async () => {
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-'));
+  // Fake-BRouter
+  fake = http.createServer((req, res) => {
+    if (req.url.includes('bad')) { res.writeHead(500); return res.end('kaputt'); }
+    res.writeHead(200, { 'Content-Type': 'application/gpx+xml' });
+    res.end('<gpx><trk><trkseg><trkpt lat="50" lon="7"><ele>1</ele></trkpt></trkseg></trk></gpx>');
+  });
+  await new Promise((r) => fake.listen(0, r));
+  server = createApp({
+    dataDir,
+    webDir: path.join(__dirname, '..', 'web'),
+    brouterUrl: `http://127.0.0.1:${fake.address().port}/brouter`,
+  });
+  await new Promise((r) => server.listen(0, r));
+  base = `http://127.0.0.1:${server.address().port}`;
+});
+
+after(() => {
+  server.close();
+  fake.close();
+  fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+test('Start: zwei Nutzer und sechs eingebaute Workouts', async () => {
+  const u = await call('GET', '/api/users');
+  assert.equal(u.data.length, 2);
+  assert.equal(u.data[0].ftp, 200);
+  const w = await call('GET', '/api/workouts');
+  assert.equal(w.data.length, 6);
+  assert.ok(w.data.every((x) => x.builtIn));
+  assert.equal(w.data.find((x) => x.id === 'builtin_ramp').steps.length, 33);
+});
+
+test('Nutzerprofil ändern und validieren', async () => {
+  const [a, b] = (await call('GET', '/api/users')).data;
+  const put = await call('PUT', `/api/users/${a.id}`, { name: 'Michael', ftp: 250, riderKg: 82.5 });
+  assert.equal(put.status, 200);
+  const re = await call('GET', `/api/users/${a.id}`);
+  assert.equal(re.data.name, 'Michael');
+  assert.equal(re.data.ftp, 250);
+  const other = await call('GET', `/api/users/${b.id}`);
+  assert.equal(other.data.ftp, 200); // unabhängig
+  assert.equal((await call('PUT', `/api/users/${a.id}`, { ftp: 5000 })).status, 400);
+  assert.equal((await call('GET', '/api/users/nicht_da')).status, 404);
+});
+
+test('Favoriten gelten je Nutzer', async () => {
+  const [a, b] = (await call('GET', '/api/users')).data;
+  await call('PUT', `/api/users/${a.id}/favorites/workouts/builtin_ramp`);
+  await call('PUT', `/api/users/${a.id}/favorites/workouts/builtin_ramp`); // doppelt
+  const fa = (await call('GET', `/api/users/${a.id}`)).data.favorites;
+  const fb = (await call('GET', `/api/users/${b.id}`)).data.favorites;
+  assert.deepEqual(fa.workouts, ['builtin_ramp']);
+  assert.deepEqual(fb.workouts, []);
+  await call('DELETE', `/api/users/${a.id}/favorites/workouts/builtin_ramp`);
+  assert.deepEqual((await call('GET', `/api/users/${a.id}`)).data.favorites.workouts, []);
+  assert.equal((await call('PUT', `/api/users/${a.id}/favorites/unsinn/x`)).status, 400);
+});
+
+test('Workouts: anlegen, ändern, löschen, Schutz eingebauter', async () => {
+  const bad = await call('POST', '/api/workouts', { name: 'x', steps: [] });
+  assert.equal(bad.status, 400);
+  const c = await call('POST', '/api/workouts', { name: 'Mein Test', steps: [{ s: 60, a: 80, b: 100, l: 'Rampe' }, { s: 30, a: 50 }] });
+  assert.equal(c.status, 200);
+  assert.equal(c.data.steps[1].b, 50);
+  const u = await call('PUT', `/api/workouts/${c.data.id}`, { name: 'Neu', steps: [{ s: 120, a: 70 }] });
+  assert.equal(u.data.name, 'Neu');
+  assert.equal((await call('PUT', '/api/workouts/builtin_ramp', { name: 'x', steps: [{ s: 1, a: 50 }] })).status, 403);
+  assert.equal((await call('DELETE', '/api/workouts/builtin_ramp')).status, 403);
+  const [a] = (await call('GET', '/api/users')).data;
+  await call('PUT', `/api/users/${a.id}/favorites/workouts/${c.data.id}`);
+  assert.equal((await call('DELETE', `/api/workouts/${c.data.id}`)).status, 200);
+  assert.deepEqual((await call('GET', `/api/users/${a.id}`)).data.favorites.workouts, []); // Favorit aufgeräumt
+});
+
+test('Strecken: anlegen, lesen, Statistik, löschen', async () => {
+  assert.equal((await call('POST', '/api/routes', { name: 'x', lat: [1], lon: [1], ele: [1] })).status, 400);
+  assert.equal((await call('POST', '/api/routes', { name: 'x', lat: [95, 1], lon: [1, 1], ele: [1, 2] })).status, 400);
+  const lat = Array.from({ length: 21 }, (_, i) => 50 + i * 0.00045), lon = lat.map(() => 7), ele = lat.map((_, i) => 100 + i * 4);
+  const c = await call('POST', '/api/routes', { name: 'Testberg', lat, lon, ele });
+  assert.equal(c.status, 200);
+  assert.ok(Math.abs(c.data.length - 1000) < 15);
+  assert.ok(c.data.ascent > 50 && c.data.ascent <= 80);
+  const list = await call('GET', '/api/routes');
+  assert.equal(list.data[0].name, 'Testberg');
+  assert.equal(list.data[0].lat, undefined); // Liste ohne Punkte
+  const full = await call('GET', `/api/routes/${c.data.id}`);
+  assert.deepEqual(full.data.ele, ele);
+  const ren = await call('PUT', `/api/routes/${c.data.id}`, { name: 'Umbenannt' });
+  assert.equal(ren.data.name, 'Umbenannt');
+  assert.equal((await call('DELETE', `/api/routes/${c.data.id}`)).status, 200);
+  assert.equal((await call('GET', `/api/routes/${c.data.id}`)).status, 404);
+});
+
+test('Fahrten: Upload, Liste, Download, Löschen', async () => {
+  const [a, b] = (await call('GET', '/api/users')).data;
+  const fit = Buffer.concat([Buffer.from([14, 0x20, 0x54, 0x08, 4, 0, 0, 0]), Buffer.from('.FIT'), Buffer.from([0, 0, 1, 2, 3, 4])]);
+  assert.equal((await call('POST', `/api/users/${a.id}/rides`, Buffer.from('kein fit'))).status, 400);
+  const up = await call('POST', `/api/users/${a.id}/rides?durationS=3600&distanceM=30000&avgPower=210&workout=Sweet%20Spot`, fit);
+  assert.equal(up.status, 200);
+  assert.equal(up.data.avgPower, 210);
+  assert.equal((await call('GET', `/api/users/${a.id}/rides`)).data.length, 1);
+  assert.equal((await call('GET', `/api/users/${b.id}/rides`)).data.length, 0);
+  const dl = await call('GET', `/api/users/${a.id}/rides/${up.data.id}/fit`);
+  assert.deepEqual(dl.data, fit);
+  assert.match(dl.headers.get('content-disposition'), /attachment/);
+  assert.equal((await call('DELETE', `/api/users/${a.id}/rides/${up.data.id}`)).status, 200);
+  assert.equal((await call('GET', `/api/users/${a.id}/rides`)).data.length, 0);
+});
+
+test('Sicherheit: Pfadtricks werden abgewiesen', async () => {
+  assert.equal((await call('GET', '/api/routes/..%2Fusers')).status, 400);
+  assert.equal((await call('GET', '/..%2Fserver.js')).status, 404);
+  assert.equal((await call('GET', '/%2e%2e/server.js')).status, 404);
+  assert.equal((await call('GET', '/api/users/..%2F..%2Fx/rides')).status, 400);
+});
+
+test('Routing-Proxy leitet weiter und prüft Eingaben', async () => {
+  const ok = await call('GET', '/api/brouter?lonlats=7,50|7.1,50.1&profile=fastbike');
+  assert.equal(ok.status, 200);
+  assert.match(ok.data.toString(), /trkpt/);
+  assert.equal((await call('GET', '/api/brouter?lonlats=abc')).status, 400);
+  assert.equal((await call('GET', '/api/brouter?lonlats=7,50|7.1,50.1&profile=bad')).status, 200); // unbekanntes Profil wird zu fastbike
+});
+
+test('Nutzer anlegen und löschen, letzter bleibt', async () => {
+  const c = await call('POST', '/api/users', { name: 'Gast' });
+  assert.equal(c.data.name, 'Gast');
+  assert.equal((await call('DELETE', `/api/users/${c.data.id}`)).status, 200);
+  const all = (await call('GET', '/api/users')).data;
+  for (const u of all.slice(1)) await call('DELETE', `/api/users/${u.id}`);
+  assert.equal((await call('DELETE', `/api/users/${all[0].id}`)).status, 400);
+});
+
+test('Daten überleben Neustart', async () => {
+  const again = createApp({ dataDir, webDir: null, brouterUrl: 'http://x' });
+  await new Promise((r) => again.listen(0, r));
+  const res = await fetch(`http://127.0.0.1:${again.address().port}/api/users`);
+  const users = await res.json();
+  assert.equal(users.length, 1);
+  again.close();
+});

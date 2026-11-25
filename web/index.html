@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rollentrainer</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>🚴 Rollentrainer</h1>
+    <label class="user">Nutzer
+      <select id="userSel"></select>
+    </label>
+    <button id="addUser" class="ghost">+ Nutzer</button>
+    <nav id="tabs">
+      <button data-tab="workouts">Workouts</button>
+      <button data-tab="routes">Strecken</button>
+      <button data-tab="rides">Verlauf</button>
+      <button data-tab="profile">Profil</button>
+    </nav>
+  </header>
+  <main id="view"></main>
+  <div id="toast" role="status"></div>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
