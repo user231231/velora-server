@@ -6,7 +6,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { builtInWorkouts } = require('./seed');
+const { builtInWorkouts, exampleRoutes, EXAMPLE_FOLDER } = require('./seed');
 
 const MAX_BODY = 40 * 1024 * 1024;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -50,7 +50,20 @@ function routeStats(lat, lon, ele) {
   return { length: Math.round(length), ascent: Math.round(ascent) };
 }
 
-function createApp({ dataDir, webDir, brouterUrl }) {
+function parseGpx(text) {
+  const lat = [], lon = [], ele = [];
+  let last = 0;
+  for (const m of text.matchAll(/<trkpt\b([^>]*)>([\s\S]*?)<\/trkpt>/g)) {
+    const la = /lat="([^"]+)"/.exec(m[1]), lo = /lon="([^"]+)"/.exec(m[1]);
+    if (!la || !lo) continue;
+    const e = /<ele>([^<]+)<\/ele>/.exec(m[2]);
+    if (e && Number.isFinite(Number(e[1]))) last = Number(e[1]);
+    lat.push(+Number(la[1]).toFixed(6)); lon.push(+Number(lo[1]).toFixed(6)); ele.push(+last.toFixed(1));
+  }
+  return { lat, lon, ele };
+}
+
+function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
   const dirs = {
     routes: path.join(dataDir, 'routes'),
     rides: path.join(dataDir, 'rides'),
@@ -125,6 +138,25 @@ function createApp({ dataDir, webDir, brouterUrl }) {
     };
   }
 
+  // Ordner: reine Namen, leer = ohne Ordner
+  const folderName = (v) => {
+    const s = String(v ?? '').trim();
+    if (s.includes('/') || s.length > 60) throw new HttpError(400, 'Ordnername ungültig (max. 60 Zeichen, kein „/“)');
+    return s;
+  };
+  const folderList = () => readJson(file('folders.json'), []);
+  const allRoutes = () => fs.readdirSync(dirs.routes).filter((f) => f.endsWith('.json'))
+    .map((f) => readJson(path.join(dirs.routes, f), null)).filter(Boolean);
+  const allFolders = () => {
+    const set = new Set(folderList());
+    for (const r of allRoutes()) if (r.folder) set.add(r.folder);
+    return [...set].sort((a, b) => a.localeCompare(b, 'de'));
+  };
+  const addFolder = (name) => {
+    const list = folderList();
+    if (name && !list.includes(name)) { list.push(name); writeJson(file('folders.json'), list); }
+  };
+
   function cleanRoute(body, id) {
     const { lat, lon, ele } = body || {};
     if (![lat, lon, ele].every(Array.isArray) || lat.length < 2 || lat.length !== lon.length || lat.length !== ele.length) {
@@ -134,10 +166,10 @@ function createApp({ dataDir, webDir, brouterUrl }) {
     const L = lat.map(Number), O = lon.map(Number), E = ele.map(Number);
     if ([...L, ...O, ...E].some((v) => !Number.isFinite(v))) throw new HttpError(400, 'Ungültige Koordinaten');
     if (L.some((v) => v < -90 || v > 90) || O.some((v) => v < -180 || v > 180)) throw new HttpError(400, 'Koordinaten außerhalb des Bereichs');
-    return { id, name: text(body.name, 'Name'), lat: L, lon: O, ele: E, ...routeStats(L, O, E), createdAt: Date.now() };
+    return { id, name: text(body.name, 'Name'), folder: folderName(body.folder), lat: L, lon: O, ele: E, ...routeStats(L, O, E), createdAt: Date.now() };
   }
 
-  const routeMeta = (r) => ({ id: r.id, name: r.name, length: r.length, ascent: r.ascent, createdAt: r.createdAt });
+  const routeMeta = (r) => ({ id: r.id, name: r.name, folder: r.folder || '', length: r.length, ascent: r.ascent, createdAt: r.createdAt });
   const routeFile = (id) => path.join(dirs.routes, `${checkId(id)}.json`);
 
   // ---- Handler ----
@@ -243,6 +275,7 @@ function createApp({ dataDir, webDir, brouterUrl }) {
       .sort((a, b) => b.createdAt - a.createdAt));
   route('POST', '/api/routes', ({ body }) => {
     const r = cleanRoute(body, newId('r'));
+    addFolder(r.folder);
     writeJson(routeFile(r.id), r);
     return routeMeta(r);
   });
@@ -254,7 +287,8 @@ function createApp({ dataDir, webDir, brouterUrl }) {
   route('PUT', '/api/routes/:id', ({ params, body }) => {
     const r = readJson(routeFile(params.id), null);
     if (!r) throw new HttpError(404, 'Strecke nicht gefunden');
-    r.name = text(body?.name, 'Name');
+    if (body?.name !== undefined) r.name = text(body.name, 'Name');
+    if (body?.folder !== undefined) { r.folder = folderName(body.folder); addFolder(r.folder); }
     writeJson(routeFile(params.id), r);
     return routeMeta(r);
   });
@@ -266,6 +300,29 @@ function createApp({ dataDir, webDir, brouterUrl }) {
     for (const u of us) u.favorites.routes = u.favorites.routes.filter((x) => x !== params.id);
     writeJson(file('users.json'), us);
     return { ok: true };
+  });
+
+  // Ordner für Strecken (gemeinsam für alle Nutzer)
+  route('GET', '/api/folders', () => allFolders());
+  route('POST', '/api/folders', ({ body }) => {
+    const name = folderName(text(body?.name, 'Name'));
+    addFolder(name);
+    return allFolders();
+  });
+  route('PUT', '/api/folders/:name', ({ params, body }) => {
+    const from = params.name, to = folderName(text(body?.name, 'Name'));
+    if (!allFolders().includes(from)) throw new HttpError(404, 'Ordner nicht gefunden');
+    if (to !== from && allFolders().includes(to)) throw new HttpError(409, 'Ordner gibt es schon');
+    writeJson(file('folders.json'), folderList().map((f) => (f === from ? to : f)));
+    for (const r of allRoutes()) if (r.folder === from) { r.folder = to; writeJson(routeFile(r.id), r); }
+    return allFolders();
+  });
+  route('DELETE', '/api/folders/:name', ({ params }) => {
+    const name = params.name;
+    if (!allFolders().includes(name)) throw new HttpError(404, 'Ordner nicht gefunden');
+    writeJson(file('folders.json'), folderList().filter((f) => f !== name));
+    for (const r of allRoutes()) if (r.folder === name) { r.folder = ''; writeJson(routeFile(r.id), r); }
+    return allFolders();
   });
 
   // Routing-Proxy (BRouter), damit der Browser keine CORS-Probleme hat
@@ -356,7 +413,33 @@ function createApp({ dataDir, webDir, brouterUrl }) {
     res.end(fs.readFileSync(full));
   }
 
-  return http.createServer(async (req, res) => {
+  // Beispielstrecken einmalig über BRouter berechnen und im Ordner „Beispiele“ ablegen.
+  // Schon angelegte (auch verschobene oder gelöschte) werden nie erneut erzeugt.
+  async function seedExampleRoutes() {
+    const doneFile = file('examples_done.json');
+    const done = new Set(readJson(doneFile, []));
+    const todo = exampleRoutes().filter((e) => !done.has(e.id));
+    if (!todo.length) return;
+    addFolder(EXAMPLE_FOLDER);
+    for (const e of todo) {
+      try {
+        const lonlats = e.waypoints.map((w) => `${w.lon},${w.lat}`).join('|');
+        const url = `${brouterUrl}?lonlats=${encodeURIComponent(lonlats)}&profile=${e.profile}&alternativeidx=0&format=gpx`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(60000) });
+        const body = await res.text();
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const g = parseGpx(body);
+        const r = cleanRoute({ name: e.name, folder: EXAMPLE_FOLDER, ...g }, newId('r'));
+        writeJson(routeFile(r.id), r);
+        done.add(e.id);
+        writeJson(doneFile, [...done]);
+      } catch (err) {
+        console.warn(`Beispielstrecke „${e.name}“ übersprungen (wird beim nächsten Start erneut versucht): ${err.message}`);
+      }
+    }
+  }
+
+  const server = http.createServer(async (req, res) => {
     const send = (status, data, headers = {}) => {
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
       res.end(JSON.stringify(data));
@@ -399,6 +482,8 @@ function createApp({ dataDir, webDir, brouterUrl }) {
       send(500, { error: 'Interner Fehler' });
     }
   });
+  server.seeding = seedExamples ? seedExampleRoutes() : Promise.resolve();
+  return server;
 }
 
 module.exports = { createApp };

@@ -69,4 +69,20 @@ function builtInWorkouts() {
   ].map((w) => ({ ...w, builtIn: true }));
 }
 
-module.exports = { builtInWorkouts };
+function exampleRoutes() {
+  const c = (id, name, region, description, a, b) => ({
+    id, name: region ? `${name} (${region})` : name, description, profile: 'fastbike',
+    waypoints: [{ lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] }],
+  });
+  return [
+    c('ex_alpe', "Alpe d'Huez", 'Frankreich', "21 Kehren von Le Bourg-d'Oisans, ca. 13 km mit rund 8 %.", [45.0547, 6.0325], [45.0917, 6.0689]),
+    c('ex_ventoux', 'Mont Ventoux (ab Bédoin)', 'Frankreich', 'Der Klassiker durch den Wald und über die kahle Mondlandschaft, ca. 21 km.', [44.1233, 5.1783], [44.1739, 5.2786]),
+    c('ex_stilfser', 'Stilfser Joch (ab Prato)', 'Italien', '48 Kehren auf 2.757 m Höhe, über 24 km Anstieg.', [46.6125, 10.5875], [46.5287, 10.4531]),
+    c('ex_tourmalet', 'Col du Tourmalet (ab Luz)', 'Frankreich', 'Pyrenäen-Riese, rund 19 km mit durchschnittlich 7 %.', [42.873, -0.0033], [42.9087, 0.1433]),
+    c('ex_galibier', 'Col du Galibier (ab Valloire)', 'Frankreich', 'Hochalpiner Pass auf 2.642 m, ca. 18 km.', [45.1673, 6.4286], [45.0643, 6.4075]),
+    c('ex_feldberg', 'Feldberg (Schwarzwald)', 'Deutschland', 'Von Todtnau auf den höchsten Gipfel des Schwarzwalds.', [47.8273, 7.9455], [47.874, 8.004]),
+    c('ex_glockner', 'Großglockner Hochalpenstraße', 'Österreich', 'Von Fusch zum Hochtor, über 20 km Dauerklettern.', [47.288, 12.819], [47.085, 12.845]),
+  ];
+}
+
+module.exports = { builtInWorkouts, exampleRoutes, EXAMPLE_FOLDER: 'Beispiele' };

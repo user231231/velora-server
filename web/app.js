@@ -7,7 +7,7 @@ const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
 const state = {
   users: [], user: null, workouts: [], routes: [],
-  tab: 'workouts', selWorkout: null, selRoute: null, onlyFavs: false,
+  tab: 'workouts', folders: [], selWorkout: null, selRoute: null, onlyFavs: false,
   editor: null, planner: null, map: null,
 };
 
@@ -176,7 +176,7 @@ async function loadAll() {
   const saved = localStorage.getItem('rtUser');
   const id = state.users.find((u) => u.id === saved)?.id || state.users[0].id;
   await selectUser(id, false);
-  [state.workouts, state.routes] = await Promise.all([api('GET', '/api/workouts'), api('GET', '/api/routes')]);
+  [state.workouts, state.routes, state.folders] = await Promise.all([api('GET', '/api/workouts'), api('GET', '/api/routes'), api('GET', '/api/folders')]);
 }
 async function selectUser(id, rerender = true) {
   state.user = await api('GET', `/api/users/${encodeURIComponent(id)}`);
@@ -318,27 +318,44 @@ function renderEditor() {
 }
 
 // ---------- Ansicht: Strecken ----------
+const folderOptions = (cur) => `<option value="">(ohne Ordner)</option>${state.folders.map((f) => `<option value="${esc(f)}" ${f === cur ? 'selected' : ''}>${esc(f)}</option>`).join('')}<option value="__new">+ Neuer Ordner …</option>`;
+async function askNewFolder() {
+  const n = (prompt('Name des neuen Ordners') || '').trim();
+  if (!n) return '';
+  state.folders = await api('POST', '/api/folders', { name: n });
+  return n;
+}
+function refreshFolderSel(sel, cur) { sel.innerHTML = folderOptions(cur); sel.value = cur; }
+
 function renderRoutes() {
   if (state.planner) return renderPlanner();
   let list = state.routes.slice();
   if (state.onlyFavs) list = list.filter((r) => isFav('routes', r.id));
   list.sort((a, b) => Number(isFav('routes', b.id)) - Number(isFav('routes', a.id)) || a.name.localeCompare(b.name, 'de'));
+  const names = [...new Set([...state.folders, ...list.map((r) => r.folder || '')])].sort((x, y) => (x === '' ) - (y === '') || x.localeCompare(y, 'de'));
+  const groups = names.filter((n) => !state.onlyFavs || list.some((r) => (r.folder || '') === n))
+    .map((n) => ({ name: n, items: list.filter((r) => (r.folder || '') === n) }))
+    .filter((g) => g.name !== '' || g.items.length);
   const sel = state.routes.find((r) => r.id === state.selRoute) || list[0];
   $('#view').innerHTML = `
     <div class="split">
       <div>
-        <div class="row"><button class="primary" id="newR">+ Strecke planen</button>
+        <div class="row"><button class="primary" id="newR">+ Strecke planen</button><button class="ghost" id="newF">+ Ordner</button>
           <button class="ghost" id="impR">GPX importieren</button><input type="file" id="gpxIn" accept=".gpx" hidden>
           <label><input type="checkbox" id="favOnly" ${state.onlyFavs ? 'checked' : ''}> nur Favoriten</label></div>
-        <div class="card list">${list.map((r) => `
-          <div class="item ${sel && r.id === sel.id ? 'sel' : ''}" data-id="${esc(r.id)}">
+        <div class="card list">${groups.map((g) => `
+          <div class="item folder" data-folder="${esc(g.name)}"><b>📁 ${esc(g.name || 'Ohne Ordner')}</b> <span class="muted">${g.items.length}</span>
+            ${g.name ? `<button class="small" data-fren="${esc(g.name)}" title="Umbenennen">✎</button><button class="small" data-fdel="${esc(g.name)}" title="Ordner löschen (Strecken bleiben erhalten)">✕</button>` : ''}</div>
+          ${g.items.map((r) => `
+          <div class="item ${sel && r.id === sel.id ? 'sel' : ''}" data-id="${esc(r.id)}" style="padding-left:24px">
             <button class="star ${isFav('routes', r.id) ? 'on' : ''}" data-star="${esc(r.id)}">★</button>
             <div class="t"><b>${esc(r.name)}</b><span>${fmtKm(r.length)} km · ${r.ascent} Hm</span></div>
-          </div>`).join('') || '<div class="item muted">Noch keine Strecken. Plane eine oder importiere eine GPX-Datei.</div>'}</div>
+          </div>`).join('')}`).join('') || '<div class="item muted">Noch keine Strecken. Plane eine oder importiere eine GPX-Datei.</div>'}</div>
       </div>
       <div class="card">${sel ? `
         <h2>${esc(sel.name)}</h2>
-        <div class="row muted"><span>${fmtKm(sel.length)} km</span><span>${sel.ascent} Hm Anstieg</span></div>
+        <div class="row muted"><span>${fmtKm(sel.length)} km</span><span>${sel.ascent} Hm Anstieg</span>
+          <label class="f" style="margin-left:auto">Ordner<select id="rFolder">${folderOptions(sel.folder || '')}</select></label></div>
         <div id="rmap" class="map"></div>
         <canvas id="rprof" style="margin-top:10px"></canvas>
         <div class="row"><button class="ghost" id="renR">Umbenennen</button><button class="danger" id="delR">Löschen</button></div>` : '<p class="muted">Keine Strecke gewählt.</p>'}</div>
@@ -346,6 +363,19 @@ function renderRoutes() {
   destroyMap();
   $('#favOnly').onchange = (e) => { state.onlyFavs = e.target.checked; render(); };
   $('#newR').onclick = () => { state.planner = { wps: [], markers: [], route: null, cands: [], profile: 'fastbike', km: 50, busy: false }; render(); };
+  $('#newF').onclick = guard(async () => { await askNewFolder(); render(); });
+  document.querySelectorAll('[data-fren]').forEach((b) => (b.onclick = guard(async (e) => {
+    e.stopPropagation(); const from = b.dataset.fren;
+    const to = (prompt('Neuer Name für den Ordner', from) || '').trim(); if (!to || to === from) return;
+    state.folders = await api('PUT', `/api/folders/${encodeURIComponent(from)}`, { name: to });
+    state.routes = await api('GET', '/api/routes'); render();
+  })));
+  document.querySelectorAll('[data-fdel]').forEach((b) => (b.onclick = guard(async (e) => {
+    e.stopPropagation(); const n = b.dataset.fdel;
+    if (!confirm(`Ordner „${n}“ löschen? Die Strecken darin bleiben erhalten und landen unter „Ohne Ordner“.`)) return;
+    state.folders = await api('DELETE', `/api/folders/${encodeURIComponent(n)}`);
+    state.routes = await api('GET', '/api/routes'); render();
+  })));
   $('#impR').onclick = () => $('#gpxIn').click();
   $('#gpxIn').onchange = guard(async (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -362,6 +392,12 @@ function renderRoutes() {
       showLine(map, r);
       drawProfile('rprof', r);
     })();
+    $('#rFolder').onchange = guard(async (e) => {
+      let f = e.target.value;
+      if (f === '__new') { f = await askNewFolder(); if (!f) { render(); return; } }
+      await api('PUT', `/api/routes/${encodeURIComponent(sel.id)}`, { folder: f });
+      state.routes = await api('GET', '/api/routes'); state.folders = await api('GET', '/api/folders'); toast('Verschoben'); render();
+    });
     $('#renR').onclick = guard(async () => {
       const name = prompt('Neuer Name', sel.name); if (!name) return;
       await api('PUT', `/api/routes/${encodeURIComponent(sel.id)}`, { name });
@@ -404,12 +440,15 @@ function renderPlanner() {
   const drawRoute = () => {
     if (p.route) { showLine(map, p.route); drawProfile('pprof', p.route); } else if (map.getSource('route')) { map.getSource('route').setData({ type: 'FeatureCollection', features: [] }); }
     $('#pSave').innerHTML = p.route ? `<h3>Ergebnis</h3><div><b>${fmtKm(routeLength(p.route))} km · ${Math.round(routeAscent(p.route))} Hm</b></div>
-      <div class="row"><input id="pName" value="${esc(p.route.name || 'Geplante Strecke')}" style="flex:1"><button class="primary" id="pSaveBtn">Speichern</button></div>` : '';
+      <div class="row"><input id="pName" value="${esc(p.route.name || 'Geplante Strecke')}" style="flex:1"></div>
+      <div class="row"><label class="f" style="flex:1">Ordner<select id="pFolder">${folderOptions(p.folder || '')}</select></label><button class="primary" id="pSaveBtn">Speichern</button></div>` : '';
+    const pf = $('#pFolder');
+    if (pf) pf.onchange = guard(async () => { if (pf.value === '__new') { const n = await askNewFolder(); p.folder = n || ''; refreshFolderSel(pf, p.folder); } else p.folder = pf.value; });
     const sb = $('#pSaveBtn');
     if (sb) sb.onclick = guard(async () => {
       const name = $('#pName').value.trim() || 'Strecke';
-      const saved = await api('POST', '/api/routes', { name, lat: p.route.lat, lon: p.route.lon, ele: p.route.ele });
-      state.routes = await api('GET', '/api/routes'); state.selRoute = saved.id; state.planner = null; toast('Strecke gespeichert'); render();
+      const saved = await api('POST', '/api/routes', { name, folder: p.folder || '', lat: p.route.lat, lon: p.route.lon, ele: p.route.ele });
+      state.routes = await api('GET', '/api/routes'); state.folders = await api('GET', '/api/folders'); state.selRoute = saved.id; state.planner = null; toast('Strecke gespeichert'); render();
     });
   };
   const fetchRoute = async (wps, profile) => {

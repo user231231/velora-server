@@ -50,3 +50,5 @@ td input[type=text] { width: 100%; min-width: 90px; }
 .chip { display: inline-block; padding: 2px 8px; background: var(--panel2); border-radius: 99px; font-size: 12px; color: var(--muted); }
 label.f { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 13px; }
 .form { display: grid; gap: 14px; max-width: 460px; }
+.item.folder { background: var(--panel2); cursor: default; position: sticky; top: 0; }
+.item.folder b { flex: 1; }

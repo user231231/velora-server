@@ -34,6 +34,7 @@ before(async () => {
     dataDir,
     webDir: path.join(__dirname, '..', 'web'),
     brouterUrl: `http://127.0.0.1:${fake.address().port}/brouter`,
+    seedExamples: false,
   });
   await new Promise((r) => server.listen(0, r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -157,10 +158,54 @@ test('Nutzer anlegen und löschen, letzter bleibt', async () => {
 });
 
 test('Daten überleben Neustart', async () => {
-  const again = createApp({ dataDir, webDir: null, brouterUrl: 'http://x' });
+  const again = createApp({ dataDir, webDir: null, brouterUrl: 'http://x', seedExamples: false });
   await new Promise((r) => again.listen(0, r));
   const res = await fetch(`http://127.0.0.1:${again.address().port}/api/users`);
   const users = await res.json();
   assert.equal(users.length, 1);
   again.close();
+});
+
+test('Ordner: anlegen, Strecke verschieben, umbenennen, löschen', async () => {
+  const pts = (n) => Array.from({ length: n }, (_, i) => i);
+  const body = { name: 'T1', lat: pts(5).map((i) => 50 + i * 0.001), lon: pts(5).map(() => 7), ele: pts(5).map((i) => 100 + i) };
+  const r = (await call('POST', '/api/routes', body)).data;
+  assert.equal(r.folder, '');
+  assert.deepEqual((await call('POST', '/api/folders', { name: 'Eifel' })).data, ['Eifel']);
+  assert.equal((await call('POST', '/api/folders', { name: 'a/b' })).status, 400);
+  const m = await call('PUT', `/api/routes/${r.id}`, { folder: 'Eifel' });
+  assert.equal(m.data.folder, 'Eifel');
+  assert.equal(m.data.name, 'T1');
+  assert.equal((await call('PUT', `/api/folders/${encodeURIComponent('Eifel')}`, { name: 'Eifel Touren' })).status, 200);
+  assert.equal((await call('GET', '/api/routes')).data.find((x) => x.id === r.id).folder, 'Eifel Touren');
+  assert.equal((await call('POST', '/api/folders', { name: 'Zweiter' })).status, 200);
+  assert.equal((await call('PUT', `/api/folders/${encodeURIComponent('Zweiter')}`, { name: 'Eifel Touren' })).status, 409);
+  await call('DELETE', `/api/folders/${encodeURIComponent('Eifel Touren')}`);
+  assert.equal((await call('GET', '/api/routes')).data.find((x) => x.id === r.id).folder, '');
+  assert.deepEqual((await call('GET', '/api/folders')).data, ['Zweiter']);
+  await call('DELETE', `/api/routes/${r.id}`);
+});
+
+test('Beispielstrecken werden einmalig im Ordner Beispiele angelegt', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-ex-'));
+  const fake2 = http.createServer((req, res) => {
+    const trk = Array.from({ length: 21 }, (_, i) => i).map((i) => `<trkpt lat="${50 + i * 0.002}" lon="7"><ele>${100 + i * 10}</ele></trkpt>`).join('');
+    res.writeHead(200, { 'Content-Type': 'application/gpx+xml' });
+    res.end(`<gpx><trk><trkseg>${trk}</trkseg></trk></gpx>`);
+  });
+  await new Promise((r) => fake2.listen(0, r));
+  const mk = () => createApp({ dataDir: dir, webDir: path.join(__dirname, '..', 'web'), brouterUrl: `http://127.0.0.1:${fake2.address().port}/b` });
+  const s1 = mk(); await s1.seeding;
+  const list = () => JSON.parse(fs.readFileSync(path.join(dir, 'examples_done.json'), 'utf8'));
+  assert.equal(list().length, 7);
+  const files = fs.readdirSync(path.join(dir, 'routes'));
+  assert.equal(files.length, 7);
+  const one = JSON.parse(fs.readFileSync(path.join(dir, 'routes', files[0]), 'utf8'));
+  assert.equal(one.folder, 'Beispiele');
+  assert.ok(one.ascent > 0);
+  fs.unlinkSync(path.join(dir, 'routes', files[0]));
+  const s2 = mk(); await s2.seeding;
+  assert.equal(fs.readdirSync(path.join(dir, 'routes')).length, 6);
+  fake2.close();
+  fs.rmSync(dir, { recursive: true, force: true });
 });
