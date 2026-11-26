@@ -1,4 +1,4 @@
-# Rollentrainer-Server (NAS)
+# Velora-Server (NAS)
 
 Gemeinsame Bibliothek für Workouts und Strecken, Nutzerprofile mit FTP, Favoriten pro Nutzer und Fahrtenspeicher.
 Die Weboberfläche läuft im Browser, die Tablet-App synchronisiert sich mit diesem Server.
@@ -7,8 +7,8 @@ Die Weboberfläche läuft im Browser, die Tablet-App synchronisiert sich mit die
 
 ## Starten (Docker auf der ThinkStation)
 ```bash
-git clone https://github.com/<DEIN-NAME>/rollentrainer-server.git
-cd rollentrainer-server
+git clone https://github.com/<DEIN-NAME>/velora-server.git
+cd velora-server
 docker compose up -d --build
 ```
 Dann im Browser `http://<IP-der-ThinkStation>:18420` öffnen. Die Daten liegen im Ordner `data/` neben der Compose-Datei. Dieser Ordner ist dein Backup.

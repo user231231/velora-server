@@ -1,8 +1,8 @@
 {
-  "name": "rollentrainer-server",
+  "name": "velora-server",
   "version": "0.1.0",
   "private": true,
-  "description": "NAS-Server für die Rollentrainer-App: Nutzer, Workouts, Strecken, Favoriten, Fahrten",
+  "description": "NAS-Server für die Velora-App: Nutzer, Workouts, Strecken, Favoriten, Fahrten",
   "main": "server.js",
   "engines": { "node": ">=18" },
   "scripts": {

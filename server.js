@@ -1,5 +1,5 @@
 'use strict';
-// Rollentrainer-Server: speichert Nutzer, Workouts, Strecken, Favoriten und Fahrten.
+// Velora-Server: speichert Nutzer, Workouts, Strecken, Favoriten und Fahrten.
 // Keine externen Abhängigkeiten, nur Node.js (>= 18). Kein Passwortschutz: nur im Heimnetz betreiben.
 
 const http = require('node:http');
@@ -546,5 +546,5 @@ if (require.main === module) {
     webDir: path.join(__dirname, 'web'),
     brouterUrl: process.env.BROUTER_URL || 'https://brouter.de/brouter',
   });
-  server.listen(port, '0.0.0.0', () => console.log(`Rollentrainer-Server läuft auf Port ${port}`));
+  server.listen(port, '0.0.0.0', () => console.log(`Velora-Server läuft auf Port ${port}`));
 }

@@ -1,7 +1,7 @@
 services:
-  rollentrainer:
+  velora:
     build: .
-    container_name: rollentrainer
+    container_name: velora
     restart: unless-stopped
     ports:
       # Weboberfläche und App-Schnittstelle: http://<IP>:18420

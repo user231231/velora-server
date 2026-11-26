@@ -1,5 +1,5 @@
 'use strict';
-// Rollentrainer Weboberfläche: Workouts, Strecken, Verlauf, Profil. Reines JavaScript ohne Build-Schritt.
+// Velora Weboberfläche: Workouts, Strecken, Verlauf, Profil. Reines JavaScript ohne Build-Schritt.
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -162,7 +162,7 @@ function showLine(map, r, sourceId = 'route') {
     if (map.getSource(sourceId)) { map.getSource(sourceId).setData(geo); return; }
     map.addSource(sourceId, { type: 'geojson', data: geo });
     map.addLayer({ id: sourceId + '-casing', type: 'line', source: sourceId, paint: { 'line-color': '#fff', 'line-width': 9, 'line-opacity': 0.9 }, layout: { 'line-join': 'round' } });
-    map.addLayer({ id: sourceId + '-line', type: 'line', source: sourceId, paint: { 'line-color': '#ff6d00', 'line-width': 5.5 }, layout: { 'line-join': 'round' } });
+    map.addLayer({ id: sourceId + '-line', type: 'line', source: sourceId, paint: { 'line-color': '#4f8cff', 'line-width': 5.5 }, layout: { 'line-join': 'round' } });
   };
   if (map.isStyleLoaded()) apply(); else map.once('load', apply);
   const b = new maplibregl.LngLatBounds();
