@@ -209,3 +209,27 @@ test('Beispielstrecken werden einmalig im Ordner Beispiele angelegt', async () =
   fake2.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('Nutzer: Icon und Farbe ändern, ungültige Werte abweisen', async () => {
+  const us = (await call('GET', '/api/users')).data;
+  assert.ok(us[0].icon && us[0].color);
+  const id = us[0].id;
+  assert.equal((await call('PUT', `/api/users/${id}`, { icon: 'mountain', color: '#00bfa5' })).data.color, '#00BFA5');
+  assert.equal((await call('PUT', `/api/users/${id}`, { icon: 'unbekannt' })).status, 400);
+  assert.equal((await call('PUT', `/api/users/${id}`, { color: 'rot' })).status, 400);
+  assert.equal((await call('GET', '/api/users')).data.find((u) => u.id === id).icon, 'mountain');
+});
+
+test('Virtuelle Strecken: anlegen, ändern, löschen, prüfen', async () => {
+  assert.deepEqual((await call('GET', '/api/worlds')).data, []);
+  assert.equal((await call('POST', '/api/worlds', { name: 'x', terrain: 'ocean', kind: 'time', value: 30 })).status, 400);
+  assert.equal((await call('POST', '/api/worlds', { name: 'x', terrain: 'hills', kind: 'time', value: 1 })).status, 400);
+  const c = await call('POST', '/api/worlds', { name: 'Hügel 45 min', terrain: 'hills', kind: 'time', value: 45, seed: 7 });
+  assert.equal(c.status, 200);
+  assert.equal(c.data.seed, 7);
+  const u = await call('PUT', `/api/worlds/${c.data.id}`, { name: 'Berge 30 km', terrain: 'mountains', kind: 'length', value: 30000 });
+  assert.equal(u.data.terrain, 'mountains');
+  assert.equal(u.data.seed, 7);
+  assert.equal((await call('DELETE', `/api/worlds/${c.data.id}`)).status, 200);
+  assert.deepEqual((await call('GET', '/api/worlds')).data, []);
+});

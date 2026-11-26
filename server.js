@@ -94,7 +94,12 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
   }
   if (!fs.existsSync(file('workouts.json'))) writeJson(file('workouts.json'), builtInWorkouts());
 
-  const users = () => readJson(file('users.json'), []);
+  const ICONS = ['bike', 'mountain', 'bolt', 'flame', 'star', 'heart', 'sun', 'leaf', 'rocket', 'paw', 'trophy', 'coffee'];
+  const COLORS = ['#2979FF', '#00BFA5', '#FF6D00', '#D500F9', '#FFC400', '#F50057', '#76FF03', '#00B8D4'];
+  // Alte Nutzer ohne Icon bekommen einen stabilen Standard nach Position.
+  const users = () => readJson(file('users.json'), []).map((u, i) => ({
+    ...u, icon: u.icon || ICONS[i % ICONS.length], color: u.color || COLORS[i % COLORS.length],
+  }));
   const workouts = () => readJson(file('workouts.json'), []);
 
   const findUser = (id) => {
@@ -189,6 +194,7 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     if (list.length >= 20) throw new HttpError(400, 'Maximal 20 Nutzer');
     const u = {
       id: newId('u'), name: text(body?.name, 'Name', 40), ftp: 200, riderKg: 75, bikeKg: 9, gradeFactor: 1,
+      icon: ICONS[list.length % ICONS.length], color: COLORS[list.length % COLORS.length],
       favorites: { workouts: [], routes: [] },
     };
     list.push(u);
@@ -203,6 +209,14 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     if (body.riderKg !== undefined) user.riderKg = num(body.riderKg, 30, 200, 'Körpergewicht');
     if (body.bikeKg !== undefined) user.bikeKg = num(body.bikeKg, 5, 30, 'Radgewicht');
     if (body.gradeFactor !== undefined) user.gradeFactor = num(body.gradeFactor, 0.1, 1, 'Steigungsfaktor');
+    if (body.icon !== undefined) {
+      if (!ICONS.includes(body.icon)) throw new HttpError(400, 'Unbekanntes Icon');
+      user.icon = body.icon;
+    }
+    if (body.color !== undefined) {
+      if (!/^#[0-9A-Fa-f]{6}$/.test(String(body.color))) throw new HttpError(400, 'Farbe muss wie #2979FF aussehen');
+      user.color = String(body.color).toUpperCase();
+    }
     writeJson(file('users.json'), list);
     return user;
   });
@@ -299,6 +313,43 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     const us = users();
     for (const u of us) u.favorites.routes = u.favorites.routes.filter((x) => x !== params.id);
     writeJson(file('users.json'), us);
+    return { ok: true };
+  });
+
+  // Virtuelle Strecken (Einstellungen, aus denen die App die Strecke erzeugt)
+  const TERRAINS = ['flat', 'hills', 'mountains', 'mixed'];
+  const worldsFile = () => file('worlds.json');
+  const worlds = () => readJson(worldsFile(), []);
+  function cleanWorld(body, id) {
+    if (!TERRAINS.includes(body?.terrain)) throw new HttpError(400, 'Gelände muss flat, hills, mountains oder mixed sein');
+    const kind = body.kind === 'time' ? 'time' : 'length';
+    const value = kind === 'time' ? num(body.value, 5, 600, 'Dauer (Minuten)') : num(body.value, 2000, 300000, 'Länge (m)');
+    return {
+      id, name: text(body.name, 'Name'), terrain: body.terrain, kind, value: Math.round(value),
+      seed: Math.round(num(body.seed ?? 1, 0, 2147483646, 'Startwert')), createdAt: Date.now(),
+    };
+  }
+  route('GET', '/api/worlds', () => worlds());
+  route('POST', '/api/worlds', ({ body }) => {
+    const list = worlds();
+    if (list.length >= 200) throw new HttpError(400, 'Maximal 200 virtuelle Strecken');
+    const w = cleanWorld(body, newId('w'));
+    list.push(w);
+    writeJson(worldsFile(), list);
+    return w;
+  });
+  route('PUT', '/api/worlds/:id', ({ params, body }) => {
+    const list = worlds();
+    const i = list.findIndex((x) => x.id === checkId(params.id));
+    if (i < 0) throw new HttpError(404, 'Virtuelle Strecke nicht gefunden');
+    list[i] = { ...cleanWorld({ ...list[i], ...body }, list[i].id), createdAt: list[i].createdAt };
+    writeJson(worldsFile(), list);
+    return list[i];
+  });
+  route('DELETE', '/api/worlds/:id', ({ params }) => {
+    const list = worlds();
+    if (!list.some((x) => x.id === checkId(params.id))) throw new HttpError(404, 'Virtuelle Strecke nicht gefunden');
+    writeJson(worldsFile(), list.filter((x) => x.id !== params.id));
     return { ok: true };
   });
 

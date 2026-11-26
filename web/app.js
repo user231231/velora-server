@@ -516,12 +516,21 @@ async function renderRides() {
 }
 
 // ---------- Ansicht: Profil ----------
+const ICON_EMOJI = { bike: '🚴', mountain: '⛰️', bolt: '⚡', flame: '🔥', star: '⭐', heart: '❤️', sun: '☀️', leaf: '🍃', rocket: '🚀', paw: '🐾', trophy: '🏆', coffee: '☕' };
+const AVATAR_COLORS = ['#2979FF', '#00BFA5', '#FF6D00', '#D500F9', '#FFC400', '#F50057', '#76FF03', '#00B8D4'];
+
 function renderProfile() {
   const u = state.user;
+  let icon = u.icon || 'bike', color = u.color || AVATAR_COLORS[0];
   $('#view').innerHTML = `
     <div class="card"><h2>Profil von ${esc(u.name)}</h2>
       <div class="form">
         <label class="f">Name<input id="uName" value="${esc(u.name)}"></label>
+        <div class="f">Icon und Farbe (für die Profilwahl in der App)
+          <div class="row" id="uIcons" style="flex-wrap:wrap">${Object.entries(ICON_EMOJI).map(([k, e]) => `<button type="button" class="ghost" data-icon="${k}" style="font-size:22px;min-width:44px">${e}</button>`).join('')}</div>
+          <div class="row" id="uColors" style="flex-wrap:wrap">${AVATAR_COLORS.map((c) => `<button type="button" data-color="${c}" aria-label="Farbe ${c}" style="width:32px;height:32px;border-radius:50%;background:${c};border:2px solid transparent"></button>`).join('')}</div>
+          <div id="uPrev" style="width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:32px"></div>
+        </div>
         <label class="f">FTP (Watt)<input id="uFtp" type="number" value="${u.ftp}" min="50" max="600"></label>
         <label class="f">Körpergewicht (kg)<input id="uKg" type="number" step="0.5" value="${u.riderKg}"></label>
         <label class="f">Gewicht Rad + Ausrüstung (kg)<input id="uBike" type="number" step="0.5" value="${u.bikeKg}"></label>
@@ -529,9 +538,17 @@ function renderProfile() {
           <input id="uGf" type="range" min="0.2" max="1" step="0.1" value="${u.gradeFactor}"></label>
         <div class="row"><button class="primary" id="uSave">Speichern</button><button class="danger" id="uDel">Nutzer löschen</button></div>
       </div></div>`;
+  const paint = () => {
+    $('#uPrev').style.background = color; $('#uPrev').textContent = ICON_EMOJI[icon] || '🚴';
+    document.querySelectorAll('[data-icon]').forEach((b) => (b.style.outline = b.dataset.icon === icon ? '2px solid ' + color : 'none'));
+    document.querySelectorAll('[data-color]').forEach((b) => (b.style.borderColor = b.dataset.color === color ? '#fff' : 'transparent'));
+  };
+  document.querySelectorAll('[data-icon]').forEach((b) => (b.onclick = () => { icon = b.dataset.icon; paint(); }));
+  document.querySelectorAll('[data-color]').forEach((b) => (b.onclick = () => { color = b.dataset.color; paint(); }));
+  paint();
   $('#uGf').oninput = (e) => ($('#uGfL').textContent = `${Math.round(e.target.value * 100)} %`);
   $('#uSave').onclick = guard(async () => {
-    await api('PUT', `/api/users/${encodeURIComponent(u.id)}`, { name: $('#uName').value, ftp: +$('#uFtp').value, riderKg: +$('#uKg').value, bikeKg: +$('#uBike').value, gradeFactor: +$('#uGf').value });
+    await api('PUT', `/api/users/${encodeURIComponent(u.id)}`, { name: $('#uName').value, ftp: +$('#uFtp').value, riderKg: +$('#uKg').value, bikeKg: +$('#uBike').value, gradeFactor: +$('#uGf').value, icon, color });
     state.users = await api('GET', '/api/users'); await selectUser(u.id, false); renderUserSelect(); toast('Gespeichert'); render();
   });
   $('#uDel').onclick = guard(async () => {
