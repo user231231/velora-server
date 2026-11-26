@@ -185,6 +185,8 @@ async function selectUser(id, rerender = true) {
   if (rerender) render();
 }
 function renderUserSelect() {
+  const cu = state.users.find((u) => u.id === state.user?.id);
+  $('#userAvatar').innerHTML = cu ? avatar(cu.icon, cu.color, 36) : '';
   $('#userSel').innerHTML = state.users.map((u) => `<option value="${esc(u.id)}" ${u.id === state.user?.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
 }
 async function toggleFav(kind, id) {
@@ -516,8 +518,27 @@ async function renderRides() {
 }
 
 // ---------- Ansicht: Profil ----------
-const ICON_EMOJI = { bike: '🚴', mountain: '⛰️', bolt: '⚡', flame: '🔥', star: '⭐', heart: '❤️', sun: '☀️', leaf: '🍃', rocket: '🚀', paw: '🐾', trophy: '🏆', coffee: '☕' };
 const AVATAR_COLORS = ['#2979FF', '#00BFA5', '#FF6D00', '#D500F9', '#FFC400', '#F50057', '#76FF03', '#00B8D4'];
+// Material-Icons (gleiche Symbole wie in der App), 24x24, gefüllt
+const ICON_SVG = {
+  bike: "<path d=\"m18.18 10-1.7-4.68A2.008 2.008 0 0 0 14.6 4H12v2h2.6l1.46 4h-4.81l-.36-1H12V7H7v2h1.75l1.82 5H9.9c-.44-2.23-2.31-3.88-4.65-3.99C2.45 9.87 0 12.2 0 15c0 2.8 2.2 5 5 5 2.46 0 4.45-1.69 4.9-4h4.2c.44 2.23 2.31 3.88 4.65 3.99 2.8.13 5.25-2.19 5.25-5 0-2.8-2.2-5-5-5h-.82zM7.82 16c-.4 1.17-1.49 2-2.82 2-1.68 0-3-1.32-3-3s1.32-3 3-3c1.33 0 2.42.83 2.82 2H5v2h2.82zm6.28-2h-1.4l-.73-2H15c-.44.58-.76 1.25-.9 2zm4.9 4c-1.68 0-3-1.32-3-3 0-.93.41-1.73 1.05-2.28l.96 2.64 1.88-.68-.97-2.67c.03 0 .06-.01.09-.01 1.68 0 3 1.32 3 3s-1.33 3-3.01 3z\"/>",
+  mountain: "<path d=\"m14 6-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z\"/>",
+  bolt: "<path d=\"M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z\"/>",
+  flame: "<path d=\"m12 12.9-2.13 2.09c-.56.56-.87 1.29-.87 2.07C9 18.68 10.35 20 12 20s3-1.32 3-2.94c0-.78-.31-1.52-.87-2.07L12 12.9z\"/><path d=\"m16 6-.44.55C14.38 8.02 12 7.19 12 5.3V2S4 6 4 13c0 2.92 1.56 5.47 3.89 6.86-.56-.79-.89-1.76-.89-2.8 0-1.32.52-2.56 1.47-3.5L12 10.1l3.53 3.47c.95.93 1.47 2.17 1.47 3.5 0 1.02-.31 1.96-.85 2.75 1.89-1.15 3.29-3.06 3.71-5.3.66-3.55-1.07-6.9-3.86-8.52z\"/>",
+  star: "<path d=\"M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z\"/>",
+  heart: "<path d=\"m12 21.35-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z\"/>",
+  sun: "<path d=\"m6.76 4.84-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7 1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91 1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z\"/>",
+  leaf: "<path d=\"M6.05 8.05c-2.73 2.73-2.73 7.15-.02 9.88 1.47-3.4 4.09-6.24 7.36-7.93-2.77 2.34-4.71 5.61-5.39 9.32 2.6 1.23 5.8.78 7.95-1.37C19.43 14.47 20 4 20 4S9.53 4.57 6.05 8.05z\"/>",
+  rocket: "<path d=\"M9.19 6.35c-2.04 2.29-3.44 5.58-3.57 5.89L2 10.69l4.05-4.05c.47-.47 1.15-.68 1.81-.55l1.33.26zM11.17 17s3.74-1.55 5.89-3.7c5.4-5.4 4.5-9.62 4.21-10.57-.95-.3-5.17-1.19-10.57 4.21C8.55 9.09 7 12.83 7 12.83L11.17 17zm6.48-2.19c-2.29 2.04-5.58 3.44-5.89 3.57L13.31 22l4.05-4.05c.47-.47.68-1.15.55-1.81l-.26-1.33zM9 18c0 .83-.34 1.58-.88 2.12C6.94 21.3 2 22 2 22s.7-4.94 1.88-6.12A2.996 2.996 0 0 1 9 18zm4-9c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2z\"/>",
+  paw: "<circle cx=\"4.5\" cy=\"9.5\" r=\"2.5\"/><circle cx=\"9\" cy=\"5.5\" r=\"2.5\"/><circle cx=\"15\" cy=\"5.5\" r=\"2.5\"/><circle cx=\"19.5\" cy=\"9.5\" r=\"2.5\"/><path d=\"M17.34 14.86c-.87-1.02-1.6-1.89-2.48-2.91-.46-.54-1.05-1.08-1.75-1.32-.11-.04-.22-.07-.33-.09-.25-.04-.52-.04-.78-.04s-.53 0-.79.05c-.11.02-.22.05-.33.09-.7.24-1.28.78-1.75 1.32-.87 1.02-1.6 1.89-2.48 2.91-1.31 1.31-2.92 2.76-2.62 4.79.29 1.02 1.02 2.03 2.33 2.32.73.15 3.06-.44 5.54-.44h.18c2.48 0 4.81.58 5.54.44 1.31-.29 2.04-1.31 2.33-2.32.31-2.04-1.3-3.49-2.61-4.8z\"/>",
+  trophy: "<path d=\"M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94A5.01 5.01 0 0 0 11 15.9V19H7v2h10v-2h-4v-3.1a5.01 5.01 0 0 0 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z\"/>",
+  coffee: "<path d=\"M18.5 3H6c-1.1 0-2 .9-2 2v5.71c0 3.83 2.95 7.18 6.78 7.29 3.96.12 7.22-3.06 7.22-7v-1h.5c1.93 0 3.5-1.57 3.5-3.5S20.43 3 18.5 3zM16 5v3H6V5h10zm2.5 3H18V5h.5c.83 0 1.5.67 1.5 1.5S19.33 8 18.5 8zM4 19h16v2H4v-2z\"/>",
+};
+function avatar(icon, color, size = 40, selected = false) {
+  const inner = ICON_SVG[icon] || ICON_SVG.bike;
+  const s = Math.round(size * 0.55);
+  return `<span class="avatar${selected ? ' sel' : ''}" style="width:${size}px;height:${size}px;background:${color || AVATAR_COLORS[0]}"><svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="#fff" aria-hidden="true">${inner}</svg></span>`;
+}
 
 function renderProfile() {
   const u = state.user;
@@ -527,9 +548,9 @@ function renderProfile() {
       <div class="form">
         <label class="f">Name<input id="uName" value="${esc(u.name)}"></label>
         <div class="f">Icon und Farbe (für die Profilwahl in der App)
-          <div class="row" id="uIcons" style="flex-wrap:wrap">${Object.entries(ICON_EMOJI).map(([k, e]) => `<button type="button" class="ghost" data-icon="${k}" style="font-size:22px;min-width:44px">${e}</button>`).join('')}</div>
-          <div class="row" id="uColors" style="flex-wrap:wrap">${AVATAR_COLORS.map((c) => `<button type="button" data-color="${c}" aria-label="Farbe ${c}" style="width:32px;height:32px;border-radius:50%;background:${c};border:2px solid transparent"></button>`).join('')}</div>
-          <div id="uPrev" style="width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:32px"></div>
+          <div id="uPrev"></div>
+          <div class="row" id="uIcons" style="flex-wrap:wrap"></div>
+          <div class="row" id="uColors" style="flex-wrap:wrap"></div>
         </div>
         <label class="f">FTP (Watt)<input id="uFtp" type="number" value="${u.ftp}" min="50" max="600"></label>
         <label class="f">Körpergewicht (kg)<input id="uKg" type="number" step="0.5" value="${u.riderKg}"></label>
@@ -539,12 +560,12 @@ function renderProfile() {
         <div class="row"><button class="primary" id="uSave">Speichern</button><button class="danger" id="uDel">Nutzer löschen</button></div>
       </div></div>`;
   const paint = () => {
-    $('#uPrev').style.background = color; $('#uPrev').textContent = ICON_EMOJI[icon] || '🚴';
-    document.querySelectorAll('[data-icon]').forEach((b) => (b.style.outline = b.dataset.icon === icon ? '2px solid ' + color : 'none'));
-    document.querySelectorAll('[data-color]').forEach((b) => (b.style.borderColor = b.dataset.color === color ? '#fff' : 'transparent'));
+    $('#uPrev').innerHTML = avatar(icon, color, 72);
+    $('#uIcons').innerHTML = Object.keys(ICON_SVG).map((k) => `<button type="button" class="pick" data-icon="${k}" aria-label="Icon ${k}">${avatar(k, color, 44, k === icon)}</button>`).join('');
+    $('#uColors').innerHTML = AVATAR_COLORS.map((c) => `<button type="button" class="pick" data-color="${c}" aria-label="Farbe ${c}"><span class="swatch${c === color ? ' sel' : ''}" style="background:${c}"></span></button>`).join('');
+    document.querySelectorAll('[data-icon]').forEach((b) => (b.onclick = () => { icon = b.dataset.icon; paint(); }));
+    document.querySelectorAll('[data-color]').forEach((b) => (b.onclick = () => { color = b.dataset.color; paint(); }));
   };
-  document.querySelectorAll('[data-icon]').forEach((b) => (b.onclick = () => { icon = b.dataset.icon; paint(); }));
-  document.querySelectorAll('[data-color]').forEach((b) => (b.onclick = () => { color = b.dataset.color; paint(); }));
   paint();
   $('#uGf').oninput = (e) => ($('#uGfL').textContent = `${Math.round(e.target.value * 100)} %`);
   $('#uSave').onclick = guard(async () => {

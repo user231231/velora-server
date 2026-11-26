@@ -54,3 +54,10 @@ label.f { display: flex; flex-direction: column; gap: 4px; color: var(--muted); 
 .item.folder b { flex: 1; }
 
 h1 .logo { width: 28px; height: 28px; vertical-align: -6px; border-radius: 7px; }
+
+.avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; border: 3px solid transparent; box-sizing: border-box; flex: none; }
+.avatar.sel { border-color: #fff; }
+.swatch { display: inline-block; width: 32px; height: 32px; border-radius: 50%; border: 3px solid transparent; box-sizing: border-box; }
+.swatch.sel { border-color: #fff; }
+button.pick { background: none; border: 0; padding: 2px; cursor: pointer; line-height: 0; }
+#userAvatar { display: inline-flex; }
