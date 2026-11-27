@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { builtInWorkouts, exampleRoutes, EXAMPLE_FOLDER } = require('./seed');
+const { fitToWorkout, FitError } = require('./fit');
 
 const MAX_BODY = 40 * 1024 * 1024;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -257,6 +258,25 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     list.push(w);
     writeJson(file('workouts.json'), list);
     return w;
+  });
+  // Workout aus einer FIT-Datei (Garmin-Workout). Eine Datei je Aufruf, die Weboberfläche ruft mehrfach auf.
+  route('POST', '/api/workouts/import-fit', ({ query, rawBody }) => {
+    const ftp = Number(query.get('ftp'));
+    let parsed;
+    try {
+      parsed = fitToWorkout(rawBody || Buffer.alloc(0), {
+        ftp: Number.isFinite(ftp) && ftp >= 50 && ftp <= 600 ? ftp : 200,
+        fallbackName: (query.get('name') || 'Importiertes Workout').replace(/\.fit$/i, '').slice(0, 80),
+      });
+    } catch (e) {
+      if (e instanceof FitError) throw new HttpError(400, e.message);
+      throw e;
+    }
+    const list = workouts();
+    const w = cleanWorkout({ name: parsed.name.slice(0, 80) || 'Importiertes Workout', description: 'Import aus FIT-Datei', steps: parsed.steps }, newId('w'), false);
+    list.push(w);
+    writeJson(file('workouts.json'), list);
+    return { ...w, warnings: parsed.warnings };
   });
   route('PUT', '/api/workouts/:id', ({ params, body }) => {
     const list = workouts();

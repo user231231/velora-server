@@ -19,6 +19,7 @@ Ohne Docker (Node.js 18 oder neuer): `node server.js` (Port per `PORT` (Standard
 `npm test`.
 
 ## Hinweise
+- **Workouts aus FIT-Dateien:** Im Reiter Workouts mit „FIT importieren“ lassen sich mehrere Garmin-Workout-Dateien auf einmal wählen. Prozent-Ziele werden übernommen, Watt-Ziele mit der FTP des gewählten Nutzers umgerechnet, Wiederholungen aufgelöst. Aufgezeichnete Fahrten (Aktivitäten) werden abgelehnt.
 - Zwei Nutzer sind vorab angelegt („Fahrer 1“, „Fahrer 2“). Umbenennen unter **Profil**.
 - Die Routenberechnung ruft vom Server aus brouter.de auf. Der Server braucht dafür Internet.
 - Die Karte der Weboberfläche lädt Kacheln und das MapLibre-Skript aus dem Internet.

@@ -233,3 +233,70 @@ test('Virtuelle Strecken: anlegen, ändern, löschen, prüfen', async () => {
   assert.equal((await call('DELETE', `/api/worlds/${c.data.id}`)).status, 200);
   assert.deepEqual((await call('GET', '/api/worlds')).data, []);
 });
+
+// ---- FIT-Workout-Import ----
+function fitWorkout(steps, name = 'Test-Workout') {
+  const recs = [];
+  const def = (local, global, fields) => {
+    recs.push(Buffer.from([0x40 | local, 0, 0, global & 255, global >> 8, fields.length, ...fields.flatMap((f) => [f.num, f.size, f.base])]));
+  };
+  const data = (local, vals) => {
+    const parts = [Buffer.from([local])];
+    for (const v of vals) {
+      if (typeof v === 'string') parts.push(Buffer.from(v + '\0'));
+      else if (v.size === 1) parts.push(Buffer.from([v.v]));
+      else if (v.size === 2) { const b = Buffer.alloc(2); b.writeUInt16LE(v.v); parts.push(b); }
+      else { const b = Buffer.alloc(4); b.writeUInt32LE(v.v); parts.push(b); }
+    }
+    recs.push(Buffer.concat(parts));
+  };
+  def(0, 0, [{ num: 0, size: 1, base: 0 }]);
+  data(0, [{ size: 1, v: 5 }]);
+  const nameLen = Buffer.byteLength(name) + 1;
+  def(1, 26, [{ num: 8, size: nameLen, base: 7 }]);
+  data(1, [name]);
+  def(2, 27, [
+    { num: 254, size: 2, base: 0x84 }, { num: 1, size: 1, base: 0 }, { num: 2, size: 4, base: 0x86 },
+    { num: 3, size: 1, base: 0 }, { num: 4, size: 4, base: 0x86 }, { num: 5, size: 4, base: 0x86 },
+    { num: 6, size: 4, base: 0x86 }, { num: 7, size: 1, base: 0 },
+  ]);
+  steps.forEach((s, i) => data(2, [
+    { size: 2, v: i }, { size: 1, v: s.dt }, { size: 4, v: s.dv }, { size: 1, v: s.tt ?? 2 },
+    { size: 4, v: s.tv ?? 0 }, { size: 4, v: s.lo ?? 0 }, { size: 4, v: s.hi ?? 0 }, { size: 1, v: s.int ?? 0 },
+  ]));
+  const body = Buffer.concat(recs);
+  const head = Buffer.alloc(14);
+  head[0] = 14; head[1] = 0x10; head.writeUInt16LE(2132, 2); head.writeUInt32LE(body.length, 4); head.write('.FIT', 8, 'latin1');
+  return Buffer.concat([head, body, Buffer.alloc(2)]);
+}
+
+test('FIT-Workout importieren: Leistungsziele, Watt, Wiederholungen', async () => {
+  const fit = fitWorkout([
+    { dt: 0, dv: 600000, tt: 4, lo: 50, hi: 70, int: 2 },
+    { dt: 0, dv: 300000, tt: 4, lo: 1240, hi: 1260, int: 0 },
+    { dt: 0, dv: 120000, int: 1 },
+    { dt: 6, dv: 1, tv: 3 },
+  ]);
+  const r = await call('POST', '/api/workouts/import-fit?ftp=250&name=datei.fit', fit);
+  assert.equal(r.status, 200);
+  assert.equal(r.data.name, 'Test-Workout');
+  assert.equal(r.data.steps.length, 7);
+  assert.deepEqual(r.data.steps[0], { s: 600, a: 50, b: 70, l: 'Einrollen' });
+  assert.equal(r.data.steps[1].a, 100);
+  assert.equal(r.data.steps[1].b, 100);
+  assert.equal(r.data.steps[2].s, 120);
+  assert.equal(r.data.steps[6].s, 120);
+  assert.ok(r.data.warnings.length > 0);
+  const list = (await call('GET', '/api/workouts')).data;
+  assert.ok(list.some((w) => w.id === r.data.id));
+});
+
+test('FIT-Workout importieren: Fehlerfälle', async () => {
+  assert.equal((await call('POST', '/api/workouts/import-fit', Buffer.from('kein fit'))).status, 400);
+  // Aufgezeichnete Fahrt (file_type 4) wird abgelehnt
+  const act = fitWorkout([{ dt: 0, dv: 1000 }]);
+  act[14 + 9 + 1] = 4; // file_type: Definition (9 Byte) + Datensatz-Header (1 Byte)
+  const r = await call('POST', '/api/workouts/import-fit', act);
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /keine Workout-Datei/);
+});

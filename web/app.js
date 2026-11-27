@@ -208,7 +208,12 @@ function renderWorkouts() {
     <div class="split">
       <div>
         <div class="row"><button class="primary" id="newW">+ Neues Workout</button>
+          <button class="ghost" id="impW" title="Mehrere Garmin-Workout-Dateien auf einmal wählen">FIT importieren</button>
+          <input type="file" id="fitIn" accept=".fit" multiple hidden>
           <label><input type="checkbox" id="favOnly" ${state.onlyFavs ? 'checked' : ''}> nur Favoriten</label></div>
+        ${state.importLog ? `<div class="card" style="margin-bottom:10px"><div class="row"><b>FIT-Import</b><button class="small" id="impClose">Schließen</button></div>
+          ${state.importLog.map((l) => `<div class="${l.ok ? '' : 'muted'}" style="${l.ok ? '' : 'color:#ff8a80'}">${l.ok ? '✓' : '✗'} ${esc(l.file)}: ${esc(l.msg)}</div>`).join('')}
+          ${state.importLog.some((l) => l.note) ? `<div class="muted" style="margin-top:6px">${esc([...new Set(state.importLog.flatMap((l) => l.note || []))].join(' · '))}</div>` : ''}</div>` : ''}
         <div class="card list">${list.map((w) => `
           <div class="item ${sel && w.id === sel.id ? 'sel' : ''}" data-id="${esc(w.id)}">
             <button class="star ${isFav('workouts', w.id) ? 'on' : ''}" data-star="${esc(w.id)}" title="Favorit">★</button>
@@ -233,6 +238,34 @@ function renderWorkouts() {
     </div>`;
   if (sel) drawWorkout('wchart', sel.steps);
   $('#favOnly').onchange = (e) => { state.onlyFavs = e.target.checked; render(); };
+  $('#impW').onclick = () => $('#fitIn').click();
+  if ($('#impClose')) $('#impClose').onclick = () => { state.importLog = null; render(); };
+  $('#fitIn').onchange = guard(async (e) => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    if (!files.length) return;
+    const log = [];
+    let lastId = null;
+    for (const f of files) {
+      try {
+        const res = await fetch(`/api/workouts/import-fit?ftp=${encodeURIComponent(state.user.ftp)}&name=${encodeURIComponent(f.name)}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: await f.arrayBuffer(),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Fehler ${res.status}`);
+        lastId = data.id;
+        log.push({ ok: true, file: f.name, msg: `„${data.name}“, ${data.steps.length} Abschnitte`, note: data.warnings });
+      } catch (err) {
+        log.push({ ok: false, file: f.name, msg: err.message });
+      }
+    }
+    state.importLog = log;
+    state.workouts = await api('GET', '/api/workouts');
+    if (lastId) state.selWorkout = lastId;
+    const ok = log.filter((l) => l.ok).length;
+    toast(`${ok} von ${log.length} Workouts importiert`, ok === 0);
+    render();
+  });
   $('#newW').onclick = () => { state.editor = { id: null, name: 'Mein Workout', description: '', steps: [{ s: 600, a: 50, b: 70, l: 'Einrollen' }, { s: 1200, a: 85, b: 85, l: 'Intervall' }] }; render(); };
   document.querySelectorAll('[data-star]').forEach((b) => (b.onclick = guard((e) => { e.stopPropagation(); return toggleFav('workouts', b.dataset.star); })));
   document.querySelectorAll('.item[data-id]').forEach((it) => (it.onclick = () => { state.selWorkout = it.dataset.id; render(); }));
