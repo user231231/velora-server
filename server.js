@@ -102,6 +102,7 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     ...u, icon: u.icon || ICONS[i % ICONS.length], color: u.color || COLORS[i % COLORS.length],
   }));
   const workouts = () => readJson(file('workouts.json'), []);
+  const categories = () => readJson(file('categories.json'), []);
 
   const findUser = (id) => {
     const list = users();
@@ -296,6 +297,42 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     const us = users();
     for (const u of us) u.favorites.workouts = u.favorites.workouts.filter((x) => x !== params.id);
     writeJson(file('users.json'), us);
+    const cats = categories();
+    if (cats.some((c) => c.workoutIds.includes(params.id))) {
+      writeJson(file('categories.json'), cats.map((c) => ({ ...c, workoutIds: c.workoutIds.filter((x) => x !== params.id) })));
+    }
+    return { ok: true };
+  });
+
+  // Eigene Workout-Kategorien mit manueller Zuordnung (gemeinsam für alle Nutzer)
+  const cleanCategory = (body, id) => {
+    const name = String((body && body.name) || '').trim().slice(0, 60);
+    if (!name) throw new HttpError(400, 'Name fehlt');
+    const known = new Set(workouts().map((w) => w.id));
+    const ids = Array.isArray(body.workoutIds) ? body.workoutIds : [];
+    const workoutIds = [...new Set(ids.filter((x) => typeof x === 'string' && known.has(x)))];
+    return { id, name, workoutIds };
+  };
+  route('GET', '/api/categories', () => categories());
+  route('POST', '/api/categories', ({ body }) => {
+    const list = categories();
+    const c = cleanCategory(body, newId('c'));
+    list.push(c);
+    writeJson(file('categories.json'), list);
+    return c;
+  });
+  route('PUT', '/api/categories/:id', ({ params, body }) => {
+    const list = categories();
+    const i = list.findIndex((c) => c.id === checkId(params.id));
+    if (i < 0) throw new HttpError(404, 'Kategorie nicht gefunden');
+    list[i] = cleanCategory(body, list[i].id);
+    writeJson(file('categories.json'), list);
+    return list[i];
+  });
+  route('DELETE', '/api/categories/:id', ({ params }) => {
+    const list = categories();
+    if (!list.some((c) => c.id === checkId(params.id))) throw new HttpError(404, 'Kategorie nicht gefunden');
+    writeJson(file('categories.json'), list.filter((c) => c.id !== params.id));
     return { ok: true };
   });
 

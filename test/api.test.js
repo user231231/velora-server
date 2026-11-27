@@ -300,3 +300,17 @@ test('FIT-Workout importieren: Fehlerfälle', async () => {
   assert.equal(r.status, 400);
   assert.match(r.data.error, /keine Workout-Datei/);
 });
+
+test('Kategorien: anlegen, zuordnen, umbenennen, löschen', async () => {
+  const w = (await call('GET', '/api/workouts')).data[0];
+  const c = (await call('POST', '/api/categories', { name: ' Meine Intervalle ', workoutIds: [w.id, 'gibtsnicht'] })).data;
+  assert.equal(c.name, 'Meine Intervalle');
+  assert.deepEqual(c.workoutIds, [w.id]);
+  assert.equal((await call('POST', '/api/categories', { name: '  ' })).status, 400);
+  const u = (await call('PUT', `/api/categories/${c.id}`, { name: 'Neu', workoutIds: [] })).data;
+  assert.deepEqual(u, { id: c.id, name: 'Neu', workoutIds: [] });
+  assert.equal((await call('GET', '/api/categories')).data.length, 1);
+  assert.equal((await call('DELETE', `/api/categories/${c.id}`)).status, 200);
+  assert.equal((await call('GET', '/api/categories')).data.length, 0);
+  assert.equal((await call('DELETE', `/api/categories/${c.id}`)).status, 404);
+});

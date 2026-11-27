@@ -24,3 +24,7 @@ Ohne Docker (Node.js 18 oder neuer): `node server.js` (Port per `PORT` (Standard
 - Die Routenberechnung ruft vom Server aus brouter.de auf. Der Server braucht dafür Internet.
 - Die Karte der Weboberfläche lädt Kacheln und das MapLibre-Skript aus dem Internet.
 - Update: `git pull` und `docker compose up -d --build`. Die Daten im Ordner `data/` bleiben erhalten.
+
+## Workout-Kategorien
+
+Die Weboberfläche zeigt Workouts als Kategorie-Kacheln (Favoriten, Dauer, Art des Trainings). Eigene Kategorien lassen sich anlegen, umbenennen, löschen und Workouts manuell zuordnen. API: `GET/POST /api/categories`, `PUT/DELETE /api/categories/:id` (Körper `{name, workoutIds}`), gespeichert in `data/categories.json`.

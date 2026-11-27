@@ -6,7 +6,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
 const state = {
-  users: [], user: null, workouts: [], routes: [],
+  users: [], user: null, workouts: [], routes: [], cats: [], wcat: null,
   tab: 'workouts', folders: [], selWorkout: null, selRoute: null, onlyFavs: false,
   editor: null, planner: null, map: null,
 };
@@ -176,7 +176,7 @@ async function loadAll() {
   const saved = localStorage.getItem('rtUser');
   const id = state.users.find((u) => u.id === saved)?.id || state.users[0].id;
   await selectUser(id, false);
-  [state.workouts, state.routes, state.folders] = await Promise.all([api('GET', '/api/workouts'), api('GET', '/api/routes'), api('GET', '/api/folders')]);
+  [state.workouts, state.routes, state.folders, state.cats] = await Promise.all([api('GET', '/api/workouts'), api('GET', '/api/routes'), api('GET', '/api/folders'), api('GET', '/api/categories')]);
 }
 async function selectUser(id, rerender = true) {
   state.user = await api('GET', `/api/users/${encodeURIComponent(id)}`);
@@ -195,22 +195,110 @@ async function toggleFav(kind, id) {
   render();
 }
 
+// ---------- Kategorien ----------
+function wStats(steps) {
+  const total = totalSec(steps) || 1;
+  const share = [0, 0, 0, 0, 0, 0];
+  let avg = 0;
+  const bands = [];
+  for (const st of steps) {
+    const n = Math.max(1, Math.floor(st.s / 5));
+    for (let i = 0; i < n; i++) {
+      const p = st.a + ((st.b - st.a) * (i + 0.5)) / n, wt = st.s / n / total;
+      const z = p < 55 ? 0 : p < 76 ? 1 : p < 91 ? 2 : p < 106 ? 3 : p < 121 ? 4 : 5;
+      share[z] += wt; avg += p * wt; bands.push([p, wt]);
+    }
+  }
+  const between = (lo, hi) => bands.reduce((a, [p, wt]) => a + (p >= lo && p < hi ? wt : 0), 0);
+  return { share, avg, between, high: share[3] + share[4] + share[5] };
+}
+const AUTO_CATS = [
+  { id: 'dur30', title: 'Unter 30 Minuten', badge: '30', color: '#0090d0', test: (w) => totalSec(w.steps) <= 1800 },
+  { id: 'dur60', title: '30 bis 60 Minuten', badge: '30–60', color: '#00be55', test: (w) => totalSec(w.steps) > 1800 && totalSec(w.steps) <= 3600 },
+  { id: 'dur90', title: '60 bis 90 Minuten', badge: '60–90', color: '#ff7f00', test: (w) => totalSec(w.steps) > 3600 && totalSec(w.steps) <= 5400 },
+  { id: 'dur90p', title: 'Über 90 Minuten', badge: '90+', color: '#ff5020', test: (w) => totalSec(w.steps) > 5400 },
+  { id: 'recovery', title: 'Regeneration', badge: 'REGENERATION', color: '#8a88a8', test: (w) => { const s = wStats(w.steps); return s.avg <= 58 && s.high < 0.02; } },
+  { id: 'endurance', title: 'Grundlage', badge: 'GRUNDLAGE', color: '#0090d0', test: (w) => { const s = wStats(w.steps); return !(s.avg <= 58 && s.high < 0.02) && s.high < 0.05 && s.share[2] < 0.25; } },
+  { id: 'sweetspot', title: 'Tempo & Sweet Spot', badge: 'TEMPO & SWEET SPOT', color: '#00be55', test: (w) => { const s = wStats(w.steps); return s.share[2] >= 0.2 || s.between(84, 97) >= 0.2; } },
+  { id: 'threshold', title: 'Schwelle', badge: 'SCHWELLE', color: '#f9c600', test: (w) => wStats(w.steps).between(95, 106) >= 0.15 },
+  { id: 'vo2', title: 'VO2max & Sprint', badge: 'VO2MAX & SPRINT', color: '#e41f1f', test: (w) => { const s = wStats(w.steps); return s.share[4] + s.share[5] >= 0.06; } },
+];
+// Alle Kategorien: automatische (nach Dauer/Intensität) und eigene (manuell zugeordnet).
+function allCats() {
+  const auto = AUTO_CATS.map((c) => ({ ...c, custom: false, list: state.workouts.filter(c.test) })).filter((c) => c.list.length);
+  const custom = state.cats.map((c) => ({
+    id: c.id, title: c.name, badge: c.name, color: '#2979ff', custom: true,
+    list: state.workouts.filter((w) => c.workoutIds.includes(w.id)),
+  }));
+  const favs = state.workouts.filter((w) => isFav('workouts', w.id));
+  return [
+    ...(favs.length ? [{ id: 'fav', title: 'Favoriten', badge: '★', color: '#f9c600', custom: false, list: favs }] : []),
+    { id: 'all', title: 'Alle Workouts', badge: 'ALLE', color: '#2979ff', custom: false, list: state.workouts },
+    ...auto, ...custom,
+  ];
+}
+async function reloadCats() { state.cats = await api('GET', '/api/categories'); }
+
+function renderAssign() {
+  const c = state.cats.find((x) => x.id === state.assign);
+  if (!c) { state.assign = null; return render(); }
+  const sorted = state.workouts.slice().sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  $('#view').innerHTML = `<div class="card">
+    <div class="row"><h2 style="margin:0;flex:1">Workouts für „${esc(c.name)}“ wählen</h2>
+      <button class="primary" id="asgSave">Speichern</button><button class="ghost" id="asgCancel">Abbrechen</button></div>
+    <div class="asglist">${sorted.map((w) => `<label class="item"><input type="checkbox" data-w="${esc(w.id)}" ${c.workoutIds.includes(w.id) ? 'checked' : ''}>
+      <div class="t"><b>${esc(w.name)}</b><span>${fmtDur(totalSec(w.steps))} · Ø ${Math.round(avgPct(w.steps))} % FTP</span></div></label>`).join('')}</div></div>`;
+  $('#asgCancel').onclick = () => { state.assign = null; render(); };
+  $('#asgSave').onclick = guard(async () => {
+    const ids = [...document.querySelectorAll('[data-w]')].filter((x) => x.checked).map((x) => x.dataset.w);
+    await api('PUT', `/api/categories/${encodeURIComponent(c.id)}`, { name: c.name, workoutIds: ids });
+    await reloadCats(); state.assign = null; toast('Zuordnung gespeichert'); render();
+  });
+}
+
+function renderCategories() {
+  const cats = allCats();
+  $('#view').innerHTML = `
+    <div class="row"><h2 style="margin:0;flex:1">Workouts</h2>
+      <button class="primary" id="newC">+ Kategorie</button>
+      <button class="primary" id="newW">+ Neues Workout</button>
+      <button class="ghost" id="impW" title="Mehrere Garmin-Workout-Dateien auf einmal wählen">FIT importieren</button>
+      <input type="file" id="fitIn" accept=".fit" multiple hidden></div>
+    <div class="tiles">${cats.map((c) => `
+      <div class="tile" data-cat="${esc(c.id)}">
+        <div class="tb" style="background:${c.color}"><span style="font-size:${c.badge.length > 6 ? 20 : 40}px">${esc(c.badge)}</span></div>
+        <div class="tt"><b>${esc(c.title)}</b><span>${c.list.length} Workouts${c.custom ? ' · eigene' : ''}</span></div>
+      </div>`).join('')}</div>`;
+  document.querySelectorAll('[data-cat]').forEach((t) => (t.onclick = () => { state.wcat = t.dataset.cat; state.selWorkout = null; render(); }));
+  $('#newC').onclick = guard(async () => {
+    const name = prompt('Name der neuen Kategorie:');
+    if (!name || !name.trim()) return;
+    const c = await api('POST', '/api/categories', { name: name.trim(), workoutIds: [] });
+    await reloadCats(); state.wcat = c.id; toast('Kategorie angelegt'); render();
+  });
+  bindWorkoutHeader();
+}
+
 // ---------- Ansicht: Workouts ----------
 function renderWorkouts() {
   const ed = state.editor;
   if (ed) return renderEditor();
-  let list = state.workouts.slice();
-  if (state.onlyFavs) list = list.filter((w) => isFav('workouts', w.id));
+  if (state.assign) return renderAssign();
+  if (!state.wcat || !allCats().some((c) => c.id === state.wcat)) { state.wcat = null; return renderCategories(); }
+  const cat = allCats().find((c) => c.id === state.wcat);
+  let list = cat.list.slice();
   list.sort((a, b) => Number(isFav('workouts', b.id)) - Number(isFav('workouts', a.id)) || a.name.localeCompare(b.name, 'de'));
   const sel = state.workouts.find((w) => w.id === state.selWorkout) || list[0];
   const ftp = state.user.ftp;
   $('#view').innerHTML = `
     <div class="split">
       <div>
+        <div class="row"><button class="ghost" id="backC">← Kategorien</button><h3 style="margin:0;flex:1">${esc(cat.title)}</h3>
+          ${cat.custom ? '<button class="small" id="renC">Umbenennen</button><button class="small danger" id="delC">Löschen</button>' : ''}</div>
         <div class="row"><button class="primary" id="newW">+ Neues Workout</button>
           <button class="ghost" id="impW" title="Mehrere Garmin-Workout-Dateien auf einmal wählen">FIT importieren</button>
           <input type="file" id="fitIn" accept=".fit" multiple hidden>
-          <label><input type="checkbox" id="favOnly" ${state.onlyFavs ? 'checked' : ''}> nur Favoriten</label></div>
+          ${cat.custom ? '<button class="ghost" id="assignC">Workouts zuordnen</button>' : ''}</div>
         ${state.importLog ? `<div class="card" style="margin-bottom:10px"><div class="row"><b>FIT-Import</b><button class="small" id="impClose">Schließen</button></div>
           ${state.importLog.map((l) => `<div class="${l.ok ? '' : 'muted'}" style="${l.ok ? '' : 'color:#ff8a80'}">${l.ok ? '✓' : '✗'} ${esc(l.file)}: ${esc(l.msg)}</div>`).join('')}
           ${state.importLog.some((l) => l.note) ? `<div class="muted" style="margin-top:6px">${esc([...new Set(state.importLog.flatMap((l) => l.note || []))].join(' · '))}</div>` : ''}</div>` : ''}
@@ -223,6 +311,7 @@ function renderWorkouts() {
       <div class="card">${sel ? `
         <h2>${esc(sel.name)} ${sel.builtIn ? '<span class="chip">eingebaut</span>' : ''}</h2>
         <div class="muted">${esc(sel.description)}</div>
+        <div class="row catrow"><span class="muted">Kategorien:</span>${state.cats.length ? state.cats.map((c) => `<label><input type="checkbox" data-asg="${esc(c.id)}" ${c.workoutIds.includes(sel.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('') : '<span class="muted">noch keine eigenen, oben „+ Kategorie“ anlegen</span>'}</div>
         <div class="row"><span>${fmtDur(totalSec(sel.steps))}</span><span class="muted">Ø ${Math.round((avgPct(sel.steps) * ftp) / 100)} W bei FTP ${ftp} W (${esc(state.user.name)})</span></div>
         <canvas id="wchart"></canvas>
         <div class="row">
@@ -237,9 +326,47 @@ function renderWorkouts() {
         </table>` : '<p class="muted">Kein Workout gewählt.</p>'}</div>
     </div>`;
   if (sel) drawWorkout('wchart', sel.steps);
-  $('#favOnly').onchange = (e) => { state.onlyFavs = e.target.checked; render(); };
-  $('#impW').onclick = () => $('#fitIn').click();
+  $('#backC').onclick = () => { state.wcat = null; state.selWorkout = null; render(); };
+  if (cat.custom) {
+    const own = state.cats.find((c) => c.id === cat.id);
+    $('#renC').onclick = guard(async () => {
+      const name = prompt('Neuer Name:', own.name);
+      if (!name || !name.trim()) return;
+      await api('PUT', `/api/categories/${encodeURIComponent(own.id)}`, { name: name.trim(), workoutIds: own.workoutIds });
+      await reloadCats(); render();
+    });
+    $('#delC').onclick = guard(async () => {
+      if (!confirm(`Kategorie „${own.name}“ löschen? Die Workouts bleiben erhalten.`)) return;
+      await api('DELETE', `/api/categories/${encodeURIComponent(own.id)}`);
+      await reloadCats(); state.wcat = null; render();
+    });
+    $('#assignC').onclick = () => { state.assign = own.id; render(); };
+  }
+  document.querySelectorAll('[data-asg]').forEach((cb) => (cb.onchange = guard(async () => {
+    const c = state.cats.find((x) => x.id === cb.dataset.asg);
+    const ids = cb.checked ? [...c.workoutIds, sel.id] : c.workoutIds.filter((x) => x !== sel.id);
+    await api('PUT', `/api/categories/${encodeURIComponent(c.id)}`, { name: c.name, workoutIds: ids });
+    await reloadCats(); render();
+  })));
+  document.querySelectorAll('[data-star]').forEach((b) => (b.onclick = guard((e) => { e.stopPropagation(); return toggleFav('workouts', b.dataset.star); })));
+  document.querySelectorAll('.item[data-id]').forEach((it) => (it.onclick = () => { state.selWorkout = it.dataset.id; render(); }));
+  if (sel) {
+    $('#editW').onclick = () => { state.editor = { id: sel.builtIn ? null : sel.id, name: sel.builtIn ? `${sel.name} (Kopie)` : sel.name, description: sel.description, steps: sel.steps.map((s) => ({ ...s })) }; render(); };
+    const del = $('#delW');
+    if (del) del.onclick = guard(async () => {
+      if (!confirm(`„${sel.name}“ für alle Nutzer löschen?`)) return;
+      await api('DELETE', `/api/workouts/${encodeURIComponent(sel.id)}`);
+      state.workouts = await api('GET', '/api/workouts'); state.selWorkout = null;
+      state.user = await api('GET', `/api/users/${encodeURIComponent(state.user.id)}`); render();
+    });
+  }
+  bindWorkoutHeader();
+}
+function bindWorkoutHeader() {
+  if ($('#impW')) $('#impW').onclick = () => $('#fitIn').click();
   if ($('#impClose')) $('#impClose').onclick = () => { state.importLog = null; render(); };
+  $('#newW').onclick = () => { state.editor = { id: null, name: 'Mein Workout', description: '', steps: [{ s: 600, a: 50, b: 70, l: 'Einrollen' }, { s: 1200, a: 85, b: 85, l: 'Intervall' }] }; render(); };
+  if (!$('#fitIn')) return;
   $('#fitIn').onchange = guard(async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
@@ -266,19 +393,6 @@ function renderWorkouts() {
     toast(`${ok} von ${log.length} Workouts importiert`, ok === 0);
     render();
   });
-  $('#newW').onclick = () => { state.editor = { id: null, name: 'Mein Workout', description: '', steps: [{ s: 600, a: 50, b: 70, l: 'Einrollen' }, { s: 1200, a: 85, b: 85, l: 'Intervall' }] }; render(); };
-  document.querySelectorAll('[data-star]').forEach((b) => (b.onclick = guard((e) => { e.stopPropagation(); return toggleFav('workouts', b.dataset.star); })));
-  document.querySelectorAll('.item[data-id]').forEach((it) => (it.onclick = () => { state.selWorkout = it.dataset.id; render(); }));
-  if (sel) {
-    $('#editW').onclick = () => { state.editor = { id: sel.builtIn ? null : sel.id, name: sel.builtIn ? `${sel.name} (Kopie)` : sel.name, description: sel.description, steps: sel.steps.map((s) => ({ ...s })) }; render(); };
-    const del = $('#delW');
-    if (del) del.onclick = guard(async () => {
-      if (!confirm(`„${sel.name}“ für alle Nutzer löschen?`)) return;
-      await api('DELETE', `/api/workouts/${encodeURIComponent(sel.id)}`);
-      state.workouts = await api('GET', '/api/workouts'); state.selWorkout = null;
-      state.user = await api('GET', `/api/users/${encodeURIComponent(state.user.id)}`); render();
-    });
-  }
 }
 
 function renderEditor() {
