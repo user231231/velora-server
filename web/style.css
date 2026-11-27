@@ -71,3 +71,9 @@ button.pick { background: none; border: 0; padding: 2px; cursor: pointer; line-h
 .tile .tt span { color: #666; font-size: 13px; }
 .catrow { gap: 14px; flex-wrap: wrap; }
 .asglist .item { cursor: pointer; }
+
+.tile { position: relative; }
+.tile .pick { position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; }
+.tile.picked { outline: 3px solid var(--accent); }
+.tile.dim { opacity: .45; }
+button:disabled { opacity: .45; cursor: not-allowed; }

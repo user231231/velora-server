@@ -127,11 +127,11 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     return s.slice(0, max);
   };
 
-  function cleanWorkout(body, id, builtIn) {
+  function cleanWorkout(body, id, builtIn, source) {
     if (!body || !Array.isArray(body.steps) || body.steps.length === 0 || body.steps.length > 500) {
       throw new HttpError(400, 'Workout braucht 1 bis 500 Abschnitte');
     }
-    return {
+    const w = {
       id,
       name: text(body.name, 'Name'),
       description: String(body.description ?? '').slice(0, 500),
@@ -143,7 +143,11 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
         l: String(s.l ?? '').slice(0, 60),
       })),
     };
+    if (source) w.source = String(source).slice(0, 200);
+    return w;
   }
+  // Inhalt eines Workouts ohne Namen: gleiche Abschnitte = gleiches Training.
+  const contentKey = (steps) => JSON.stringify(steps.map((s) => [s.s, Math.round(s.a * 10) / 10, Math.round(s.b * 10) / 10]));
 
   // Ordner: reine Namen, leer = ohne Ordner
   const folderName = (v) => {
@@ -274,19 +278,55 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
       throw e;
     }
     const list = workouts();
-    const w = cleanWorkout({ name: parsed.name.slice(0, 80) || 'Importiertes Workout', description: 'Import aus FIT-Datei', steps: parsed.steps }, newId('w'), false);
+    const fileName = (query.get('name') || '').slice(0, 200);
+    const w = cleanWorkout({ name: parsed.name.slice(0, 80) || 'Importiertes Workout', description: 'Import aus FIT-Datei', steps: parsed.steps }, newId('w'), false, fileName);
+    // Duplikat-Prüfung: gleicher Inhalt = schon vorhanden (auch unter anderem Namen/Dateinamen).
+    const key = contentKey(w.steps);
+    const dup = list.find((x) => contentKey(x.steps) === key);
+    const catId = query.get('category');
+    const assign = (wid) => {
+      if (!catId) return;
+      const cats = categories();
+      const c = cats.find((x) => x.id === catId);
+      if (!c) throw new HttpError(404, 'Kategorie nicht gefunden');
+      if (!c.workoutIds.includes(wid)) {
+        c.workoutIds.push(wid);
+        writeJson(file('categories.json'), cats);
+      }
+    };
+    if (dup) {
+      assign(dup.id);
+      return { ...dup, duplicate: true, warnings: parsed.warnings };
+    }
+    const sameName = fileName && list.some((x) => x.source === fileName);
     list.push(w);
     writeJson(file('workouts.json'), list);
-    return { ...w, warnings: parsed.warnings };
+    assign(w.id);
+    return { ...w, duplicate: false, sameFileName: !!sameName, warnings: parsed.warnings };
   });
   route('PUT', '/api/workouts/:id', ({ params, body }) => {
     const list = workouts();
     const i = list.findIndex((w) => w.id === checkId(params.id));
     if (i < 0) throw new HttpError(404, 'Workout nicht gefunden');
     if (list[i].builtIn) throw new HttpError(403, 'Eingebaute Workouts sind schreibgeschützt. Bitte eine Kopie speichern.');
-    list[i] = cleanWorkout(body, list[i].id, false);
+    list[i] = cleanWorkout(body, list[i].id, false, list[i].source);
     writeJson(file('workouts.json'), list);
     return list[i];
+  });
+  route('POST', '/api/workouts/bulk-delete', ({ body }) => {
+    const ids = new Set(Array.isArray(body && body.ids) ? body.ids.filter((x) => typeof x === 'string') : []);
+    const list = workouts();
+    const del = list.filter((w) => ids.has(w.id) && !w.builtIn);
+    const skipped = list.filter((w) => ids.has(w.id) && w.builtIn).length;
+    const gone = new Set(del.map((w) => w.id));
+    if (gone.size) {
+      writeJson(file('workouts.json'), list.filter((w) => !gone.has(w.id)));
+      const us = users();
+      for (const u of us) u.favorites.workouts = u.favorites.workouts.filter((x) => !gone.has(x));
+      writeJson(file('users.json'), us);
+      writeJson(file('categories.json'), categories().map((c) => ({ ...c, workoutIds: c.workoutIds.filter((x) => !gone.has(x)) })));
+    }
+    return { deleted: gone.size, skippedBuiltIn: skipped };
   });
   route('DELETE', '/api/workouts/:id', ({ params }) => {
     const list = workouts();
@@ -328,6 +368,13 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     list[i] = cleanCategory(body, list[i].id);
     writeJson(file('categories.json'), list);
     return list[i];
+  });
+  route('POST', '/api/categories/bulk-delete', ({ body }) => {
+    const ids = new Set(Array.isArray(body && body.ids) ? body.ids.filter((x) => typeof x === 'string') : []);
+    const list = categories();
+    const keep = list.filter((c) => !ids.has(c.id));
+    writeJson(file('categories.json'), keep);
+    return { deleted: list.length - keep.length };
   });
   route('DELETE', '/api/categories/:id', ({ params }) => {
     const list = categories();

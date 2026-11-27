@@ -6,7 +6,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
 const state = {
-  users: [], user: null, workouts: [], routes: [], cats: [], wcat: null,
+  users: [], user: null, workouts: [], routes: [], cats: [], wcat: null, selMode: false, selIds: new Set(),
   tab: 'workouts', folders: [], selWorkout: null, selRoute: null, onlyFavs: false,
   editor: null, planner: null, map: null,
 };
@@ -261,15 +261,33 @@ function renderCategories() {
   $('#view').innerHTML = `
     <div class="row"><h2 style="margin:0;flex:1">Workouts</h2>
       <button class="primary" id="newC">+ Kategorie</button>
+      <button class="ghost" id="selC">${state.selMode ? 'Auswahl beenden' : 'Auswählen'}</button>
+      ${state.selMode ? `<button class="danger" id="delSelC" ${state.selIds.size ? '' : 'disabled'}>Löschen (${state.selIds.size})</button>` : ''}
       <button class="primary" id="newW">+ Neues Workout</button>
       <button class="ghost" id="impW" title="Mehrere Garmin-Workout-Dateien auf einmal wählen">FIT importieren</button>
       <input type="file" id="fitIn" accept=".fit" multiple hidden></div>
     <div class="tiles">${cats.map((c) => `
-      <div class="tile" data-cat="${esc(c.id)}">
+      <div class="tile ${state.selMode && c.custom && state.selIds.has(c.id) ? 'picked' : ''} ${state.selMode && !c.custom ? 'dim' : ''}" data-cat="${esc(c.id)}">
+        ${state.selMode && c.custom ? `<input type="checkbox" class="pick" ${state.selIds.has(c.id) ? 'checked' : ''} tabindex="-1">` : ''}
         <div class="tb" style="background:${c.color}"><span style="font-size:${c.badge.length > 6 ? 20 : 40}px">${esc(c.badge)}</span></div>
         <div class="tt"><b>${esc(c.title)}</b><span>${c.list.length} Workouts${c.custom ? ' · eigene' : ''}</span></div>
       </div>`).join('')}</div>`;
-  document.querySelectorAll('[data-cat]').forEach((t) => (t.onclick = () => { state.wcat = t.dataset.cat; state.selWorkout = null; render(); }));
+  document.querySelectorAll('[data-cat]').forEach((t) => (t.onclick = () => {
+    if (state.selMode) {
+      const c = cats.find((x) => x.id === t.dataset.cat);
+      if (!c || !c.custom) return toast('Automatische Kategorien lassen sich nicht löschen', true);
+      if (!state.selIds.delete(c.id)) state.selIds.add(c.id);
+      return render();
+    }
+    state.wcat = t.dataset.cat; state.selWorkout = null; render();
+  }));
+  $('#selC').onclick = () => { state.selMode = !state.selMode; state.selIds = new Set(); render(); };
+  if ($('#delSelC')) $('#delSelC').onclick = guard(async () => {
+    const n = state.selIds.size;
+    if (!n || !confirm(`${n} ${n === 1 ? 'Kategorie' : 'Kategorien'} löschen? Die Workouts bleiben erhalten.`)) return;
+    await api('POST', '/api/categories/bulk-delete', { ids: [...state.selIds] });
+    state.selMode = false; state.selIds = new Set(); await reloadCats(); toast(`${n} gelöscht`); render();
+  });
   $('#newC').onclick = guard(async () => {
     const name = prompt('Name der neuen Kategorie:');
     if (!name || !name.trim()) return;
@@ -296,14 +314,18 @@ function renderWorkouts() {
         <div class="row"><button class="ghost" id="backC">← Kategorien</button><h3 style="margin:0;flex:1">${esc(cat.title)}</h3>
           ${cat.custom ? '<button class="small" id="renC">Umbenennen</button><button class="small danger" id="delC">Löschen</button>' : ''}</div>
         <div class="row"><button class="primary" id="newW">+ Neues Workout</button>
-          <button class="ghost" id="impW" title="Mehrere Garmin-Workout-Dateien auf einmal wählen">FIT importieren</button>
+          <button class="ghost" id="impW" title="Mehrere Garmin-Workout-Dateien auf einmal wählen${cat.custom ? '; sie landen in dieser Kategorie' : ''}">FIT importieren${cat.custom ? ' in diese Kategorie' : ''}</button>
           <input type="file" id="fitIn" accept=".fit" multiple hidden>
+          <button class="ghost" id="selW">${state.selMode ? 'Auswahl beenden' : 'Auswählen'}</button>
           ${cat.custom ? '<button class="ghost" id="assignC">Workouts zuordnen</button>' : ''}</div>
         ${state.importLog ? `<div class="card" style="margin-bottom:10px"><div class="row"><b>FIT-Import</b><button class="small" id="impClose">Schließen</button></div>
-          ${state.importLog.map((l) => `<div class="${l.ok ? '' : 'muted'}" style="${l.ok ? '' : 'color:#ff8a80'}">${l.ok ? '✓' : '✗'} ${esc(l.file)}: ${esc(l.msg)}</div>`).join('')}
+          ${state.importLog.map((l) => `<div class="${l.ok ? '' : 'muted'}" style="${l.ok ? '' : 'color:#ff8a80'}">${l.dup ? '=' : l.ok ? '✓' : '✗'} ${esc(l.file)}: ${esc(l.msg)}</div>`).join('')}
           ${state.importLog.some((l) => l.note) ? `<div class="muted" style="margin-top:6px">${esc([...new Set(state.importLog.flatMap((l) => l.note || []))].join(' · '))}</div>` : ''}</div>` : ''}
+        ${state.selMode ? `<div class="row"><button class="small" id="selAll">Alle</button><button class="small" id="selNone">Keine</button>
+          <button class="danger" id="delSelW" ${state.selIds.size ? '' : 'disabled'}>Löschen (${state.selIds.size})</button></div>` : ''}
         <div class="card list">${list.map((w) => `
-          <div class="item ${sel && w.id === sel.id ? 'sel' : ''}" data-id="${esc(w.id)}">
+          <div class="item ${!state.selMode && sel && w.id === sel.id ? 'sel' : ''}" data-id="${esc(w.id)}">
+            ${state.selMode ? `<input type="checkbox" ${state.selIds.has(w.id) ? 'checked' : ''} ${w.builtIn ? 'disabled title="Eingebaute Workouts lassen sich nicht löschen"' : ''} tabindex="-1">` : ''}
             <button class="star ${isFav('workouts', w.id) ? 'on' : ''}" data-star="${esc(w.id)}" title="Favorit">★</button>
             <div class="t"><b>${esc(w.name)}</b><span>${fmtDur(totalSec(w.steps))} · Ø ${Math.round(avgPct(w.steps))} % FTP</span></div>
           </div>`).join('') || '<div class="item muted">Keine Workouts</div>'}</div>
@@ -326,7 +348,7 @@ function renderWorkouts() {
         </table>` : '<p class="muted">Kein Workout gewählt.</p>'}</div>
     </div>`;
   if (sel) drawWorkout('wchart', sel.steps);
-  $('#backC').onclick = () => { state.wcat = null; state.selWorkout = null; render(); };
+  $('#backC').onclick = () => { state.selMode = false; state.selIds = new Set(); state.wcat = null; state.selWorkout = null; render(); };
   if (cat.custom) {
     const own = state.cats.find((c) => c.id === cat.id);
     $('#renC').onclick = guard(async () => {
@@ -349,7 +371,29 @@ function renderWorkouts() {
     await reloadCats(); render();
   })));
   document.querySelectorAll('[data-star]').forEach((b) => (b.onclick = guard((e) => { e.stopPropagation(); return toggleFav('workouts', b.dataset.star); })));
-  document.querySelectorAll('.item[data-id]').forEach((it) => (it.onclick = () => { state.selWorkout = it.dataset.id; render(); }));
+  document.querySelectorAll('.item[data-id]').forEach((it) => (it.onclick = () => {
+    if (state.selMode) {
+      const w = list.find((x) => x.id === it.dataset.id);
+      if (!w || w.builtIn) return;
+      if (!state.selIds.delete(w.id)) state.selIds.add(w.id);
+      return render();
+    }
+    state.selWorkout = it.dataset.id; render();
+  }));
+  $('#selW').onclick = () => { state.selMode = !state.selMode; state.selIds = new Set(); render(); };
+  if (state.selMode) {
+    $('#selAll').onclick = () => { state.selIds = new Set(list.filter((w) => !w.builtIn).map((w) => w.id)); render(); };
+    $('#selNone').onclick = () => { state.selIds = new Set(); render(); };
+    $('#delSelW').onclick = guard(async () => {
+      const n = state.selIds.size;
+      if (!n || !confirm(`${n} ${n === 1 ? 'Workout' : 'Workouts'} für alle Nutzer löschen?`)) return;
+      await api('POST', '/api/workouts/bulk-delete', { ids: [...state.selIds] });
+      state.selMode = false; state.selIds = new Set(); state.selWorkout = null;
+      state.workouts = await api('GET', '/api/workouts'); await reloadCats();
+      state.user = await api('GET', `/api/users/${encodeURIComponent(state.user.id)}`);
+      toast(`${n} gelöscht`); render();
+    });
+  }
   if (sel) {
     $('#editW').onclick = () => { state.editor = { id: sel.builtIn ? null : sel.id, name: sel.builtIn ? `${sel.name} (Kopie)` : sel.name, description: sel.description, steps: sel.steps.map((s) => ({ ...s })) }; render(); };
     const del = $('#delW');
@@ -375,13 +419,15 @@ function bindWorkoutHeader() {
     let lastId = null;
     for (const f of files) {
       try {
-        const res = await fetch(`/api/workouts/import-fit?ftp=${encodeURIComponent(state.user.ftp)}&name=${encodeURIComponent(f.name)}`, {
+        const catQ = state.cats.some((c) => c.id === state.wcat) ? `&category=${encodeURIComponent(state.wcat)}` : '';
+        const res = await fetch(`/api/workouts/import-fit?ftp=${encodeURIComponent(state.user.ftp)}&name=${encodeURIComponent(f.name)}${catQ}`, {
           method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: await f.arrayBuffer(),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Fehler ${res.status}`);
         lastId = data.id;
-        log.push({ ok: true, file: f.name, msg: `„${data.name}“, ${data.steps.length} Abschnitte`, note: data.warnings });
+        if (data.duplicate) log.push({ ok: true, dup: true, file: f.name, msg: `schon vorhanden als „${data.name}“, nicht erneut importiert${catQ ? ' (der Kategorie zugeordnet)' : ''}` });
+        else log.push({ ok: true, file: f.name, msg: `„${data.name}“, ${data.steps.length} Abschnitte${data.sameFileName ? ', gleicher Dateiname wie ein vorhandenes Workout, aber anderer Inhalt' : ''}`, note: data.warnings });
       } catch (err) {
         log.push({ ok: false, file: f.name, msg: err.message });
       }
@@ -389,8 +435,9 @@ function bindWorkoutHeader() {
     state.importLog = log;
     state.workouts = await api('GET', '/api/workouts');
     if (lastId) state.selWorkout = lastId;
-    const ok = log.filter((l) => l.ok).length;
-    toast(`${ok} von ${log.length} Workouts importiert`, ok === 0);
+    await reloadCats();
+    const ok = log.filter((l) => l.ok && !l.dup).length, dups = log.filter((l) => l.dup).length;
+    toast(`${ok} importiert${dups ? `, ${dups} schon vorhanden` : ''}${log.length - ok - dups ? `, ${log.length - ok - dups} fehlgeschlagen` : ''}`, ok + dups === 0);
     render();
   });
 }

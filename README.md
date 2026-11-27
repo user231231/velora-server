@@ -28,3 +28,5 @@ Ohne Docker (Node.js 18 oder neuer): `node server.js` (Port per `PORT` (Standard
 ## Workout-Kategorien
 
 Die Weboberfläche zeigt Workouts als Kategorie-Kacheln (Favoriten, Dauer, Art des Trainings). Eigene Kategorien lassen sich anlegen, umbenennen, löschen und Workouts manuell zuordnen. API: `GET/POST /api/categories`, `PUT/DELETE /api/categories/:id` (Körper `{name, workoutIds}`), gespeichert in `data/categories.json`.
+
+Workouts und Kategorien lassen sich einzeln oder per Mehrfachauswahl löschen (`POST /api/workouts/bulk-delete`, `POST /api/categories/bulk-delete`, Körper `{ids:[…]}`); eingebaute Workouts bleiben geschützt. Der FIT-Import erkennt Duplikate am Inhalt (gleiche Abschnitte, unabhängig vom Namen) und akzeptiert `?category=<id>`, um importierte Workouts direkt einer Kategorie zuzuordnen.

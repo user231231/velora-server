@@ -314,3 +314,29 @@ test('Kategorien: anlegen, zuordnen, umbenennen, löschen', async () => {
   assert.equal((await call('GET', '/api/categories')).data.length, 0);
   assert.equal((await call('DELETE', `/api/categories/${c.id}`)).status, 404);
 });
+
+test('FIT-Import: Duplikate erkennen und Kategorie zuweisen', async () => {
+  const mk = (dv) => fitWorkout([{ dt: 0, dv, tt: 4, lo: 50, hi: 70, int: 0 }, { dt: 0, dv: 300000, tt: 4, lo: 1240, hi: 1260, int: 0 }], 'Intervalle');
+  const cat = (await call('POST', '/api/categories', { name: 'Import', workoutIds: [] })).data;
+  const a = (await call('POST', `/api/workouts/import-fit?ftp=250&name=a.fit&category=${cat.id}`, mk(111000))).data;
+  assert.equal(a.duplicate, false);
+  // gleicher Inhalt, anderer Dateiname: Duplikat
+  const b = (await call('POST', '/api/workouts/import-fit?ftp=250&name=b.fit', mk(111000))).data;
+  assert.equal(b.duplicate, true);
+  assert.equal(b.id, a.id);
+  // gleicher Dateiname, anderer Inhalt: neu, mit Hinweis
+  const c = (await call('POST', '/api/workouts/import-fit?ftp=250&name=a.fit', mk(222000))).data;
+  assert.equal(c.duplicate, false);
+  assert.equal(c.sameFileName, true);
+  assert.deepEqual((await call('GET', '/api/categories')).data.find((x) => x.id === cat.id).workoutIds, [a.id]);
+  // Duplikat landet bei Angabe einer Kategorie ebenfalls dort
+  await call('POST', `/api/workouts/import-fit?ftp=250&name=c.fit&category=${cat.id}`, mk(222000));
+  assert.deepEqual((await call('GET', '/api/categories')).data.find((x) => x.id === cat.id).workoutIds, [a.id, c.id]);
+  // Sammel-Löschen: eingebaute bleiben, Kategorien werden bereinigt
+  const all = (await call('GET', '/api/workouts')).data;
+  const r = (await call('POST', '/api/workouts/bulk-delete', { ids: [a.id, c.id, all[0].id] })).data;
+  assert.equal(r.deleted, 2);
+  assert.equal(r.skippedBuiltIn, 1);
+  assert.deepEqual((await call('GET', '/api/categories')).data.find((x) => x.id === cat.id).workoutIds, []);
+  assert.equal((await call('POST', '/api/categories/bulk-delete', { ids: [cat.id, 'x'] })).data.deleted, 1);
+});
