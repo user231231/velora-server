@@ -8,6 +8,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { builtInWorkouts, exampleRoutes, EXAMPLE_FOLDER } = require('./seed');
 const { fitToWorkout, FitError } = require('./fit');
+const { DURATION_CATS, TYPE_CATS, TYPE_IDS, DURATION_IDS, durationCat, autoType } = require('./classify');
 
 const MAX_BODY = 40 * 1024 * 1024;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -127,7 +128,7 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     return s.slice(0, max);
   };
 
-  function cleanWorkout(body, id, builtIn, source) {
+  function cleanWorkout(body, id, builtIn, source, typeOverride) {
     if (!body || !Array.isArray(body.steps) || body.steps.length === 0 || body.steps.length > 500) {
       throw new HttpError(400, 'Workout braucht 1 bis 500 Abschnitte');
     }
@@ -144,8 +145,15 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
       })),
     };
     if (source) w.source = String(source).slice(0, 200);
+    if (typeOverride && TYPE_IDS.has(typeOverride)) w.typeOverride = typeOverride;
     return w;
   }
+  // Antwortform: Einordnung (type = wirksame Art, autoType = Regel, pinned = manuell festgelegt) und Dauerkategorie.
+  const decorate = (w) => {
+    const { typeOverride, ...rest } = w;
+    const auto = autoType(w.steps);
+    return { ...rest, type: typeOverride || auto, autoType: auto, pinned: !!typeOverride, durationCat: durationCat(w.steps) };
+  };
   // Inhalt eines Workouts ohne Namen: gleiche Abschnitte = gleiches Training.
   const contentKey = (steps) => JSON.stringify(steps.map((s) => [s.s, Math.round(s.a * 10) / 10, Math.round(s.b * 10) / 10]));
 
@@ -256,13 +264,14 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
   });
 
   // Workouts (gemeinsame Bibliothek)
-  route('GET', '/api/workouts', () => workouts());
+  route('GET', '/api/workout-categories', () => [...DURATION_CATS, ...TYPE_CATS]);
+  route('GET', '/api/workouts', () => workouts().map(decorate));
   route('POST', '/api/workouts', ({ body }) => {
     const list = workouts();
     const w = cleanWorkout(body, newId('w'), false);
     list.push(w);
     writeJson(file('workouts.json'), list);
-    return w;
+    return decorate(w);
   });
   // Workout aus einer FIT-Datei (Garmin-Workout). Eine Datei je Aufruf, die Weboberfläche ruft mehrfach auf.
   route('POST', '/api/workouts/import-fit', ({ query, rawBody }) => {
@@ -285,7 +294,14 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     const dup = list.find((x) => contentKey(x.steps) === key);
     const catId = query.get('category');
     const assign = (wid) => {
-      if (!catId) return;
+      if (!catId || catId === 'all' || catId === 'fav' || DURATION_IDS.has(catId)) return; // dort gibt es nichts zuzuordnen
+      if (TYPE_IDS.has(catId)) {
+        // Trainingsart fest vorgeben: gilt vor der automatischen Regel
+        const l = workouts();
+        const t = l.find((x) => x.id === wid);
+        if (t) { t.typeOverride = catId; writeJson(file('workouts.json'), l); }
+        return;
+      }
       const cats = categories();
       const c = cats.find((x) => x.id === catId);
       if (!c) throw new HttpError(404, 'Kategorie nicht gefunden');
@@ -296,22 +312,36 @@ function createApp({ dataDir, webDir, brouterUrl, seedExamples = true }) {
     };
     if (dup) {
       assign(dup.id);
-      return { ...dup, duplicate: true, warnings: parsed.warnings };
+      const cur = workouts().find((x) => x.id === dup.id) || dup;
+      return { ...decorate(cur), duplicate: true, warnings: parsed.warnings };
     }
     const sameName = fileName && list.some((x) => x.source === fileName);
     list.push(w);
     writeJson(file('workouts.json'), list);
     assign(w.id);
-    return { ...w, duplicate: false, sameFileName: !!sameName, warnings: parsed.warnings };
+    const cur = workouts().find((x) => x.id === w.id) || w;
+    return { ...decorate(cur), duplicate: false, sameFileName: !!sameName, warnings: parsed.warnings };
   });
   route('PUT', '/api/workouts/:id', ({ params, body }) => {
     const list = workouts();
     const i = list.findIndex((w) => w.id === checkId(params.id));
     if (i < 0) throw new HttpError(404, 'Workout nicht gefunden');
     if (list[i].builtIn) throw new HttpError(403, 'Eingebaute Workouts sind schreibgeschützt. Bitte eine Kopie speichern.');
-    list[i] = cleanWorkout(body, list[i].id, false, list[i].source);
+    list[i] = cleanWorkout(body, list[i].id, false, list[i].source, list[i].typeOverride);
     writeJson(file('workouts.json'), list);
-    return list[i];
+    return decorate(list[i]);
+  });
+  // Trainingsart manuell festlegen (type) oder zurück auf automatisch (null). Gilt auch für eingebaute Workouts.
+  route('PUT', '/api/workouts/:id/type', ({ params, body }) => {
+    const list = workouts();
+    const w = list.find((x) => x.id === checkId(params.id));
+    if (!w) throw new HttpError(404, 'Workout nicht gefunden');
+    const t = body && body.type;
+    if (t === null || t === undefined || t === '') delete w.typeOverride;
+    else if (TYPE_IDS.has(t)) w.typeOverride = t;
+    else throw new HttpError(400, 'Unbekannte Trainingsart');
+    writeJson(file('workouts.json'), list);
+    return decorate(w);
   });
   route('POST', '/api/workouts/bulk-delete', ({ body }) => {
     const ids = new Set(Array.isArray(body && body.ids) ? body.ids.filter((x) => typeof x === 'string') : []);

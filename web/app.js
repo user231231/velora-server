@@ -6,7 +6,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
 const state = {
-  users: [], user: null, workouts: [], routes: [], cats: [], wcat: null, selMode: false, selIds: new Set(),
+  users: [], user: null, workouts: [], routes: [], cats: [], wcats: [], wcat: null, selMode: false, selIds: new Set(),
   tab: 'workouts', folders: [], selWorkout: null, selRoute: null, onlyFavs: false,
   editor: null, planner: null, map: null,
 };
@@ -176,7 +176,7 @@ async function loadAll() {
   const saved = localStorage.getItem('rtUser');
   const id = state.users.find((u) => u.id === saved)?.id || state.users[0].id;
   await selectUser(id, false);
-  [state.workouts, state.routes, state.folders, state.cats] = await Promise.all([api('GET', '/api/workouts'), api('GET', '/api/routes'), api('GET', '/api/folders'), api('GET', '/api/categories')]);
+  [state.workouts, state.routes, state.folders, state.cats, state.wcats] = await Promise.all([api('GET', '/api/workouts'), api('GET', '/api/routes'), api('GET', '/api/folders'), api('GET', '/api/categories'), api('GET', '/api/workout-categories')]);
 }
 async function selectUser(id, rerender = true) {
   state.user = await api('GET', `/api/users/${encodeURIComponent(id)}`);
@@ -196,36 +196,14 @@ async function toggleFav(kind, id) {
 }
 
 // ---------- Kategorien ----------
-function wStats(steps) {
-  const total = totalSec(steps) || 1;
-  const share = [0, 0, 0, 0, 0, 0];
-  let avg = 0;
-  const bands = [];
-  for (const st of steps) {
-    const n = Math.max(1, Math.floor(st.s / 5));
-    for (let i = 0; i < n; i++) {
-      const p = st.a + ((st.b - st.a) * (i + 0.5)) / n, wt = st.s / n / total;
-      const z = p < 55 ? 0 : p < 76 ? 1 : p < 91 ? 2 : p < 106 ? 3 : p < 121 ? 4 : 5;
-      share[z] += wt; avg += p * wt; bands.push([p, wt]);
-    }
-  }
-  const between = (lo, hi) => bands.reduce((a, [p, wt]) => a + (p >= lo && p < hi ? wt : 0), 0);
-  return { share, avg, between, high: share[3] + share[4] + share[5] };
-}
-const AUTO_CATS = [
-  { id: 'dur30', title: 'Unter 30 Minuten', badge: '30', color: '#0090d0', test: (w) => totalSec(w.steps) <= 1800 },
-  { id: 'dur60', title: '30 bis 60 Minuten', badge: '30–60', color: '#00be55', test: (w) => totalSec(w.steps) > 1800 && totalSec(w.steps) <= 3600 },
-  { id: 'dur90', title: '60 bis 90 Minuten', badge: '60–90', color: '#ff7f00', test: (w) => totalSec(w.steps) > 3600 && totalSec(w.steps) <= 5400 },
-  { id: 'dur90p', title: 'Über 90 Minuten', badge: '90+', color: '#ff5020', test: (w) => totalSec(w.steps) > 5400 },
-  { id: 'recovery', title: 'Regeneration', badge: 'REGENERATION', color: '#8a88a8', test: (w) => { const s = wStats(w.steps); return s.avg <= 58 && s.high < 0.02; } },
-  { id: 'endurance', title: 'Grundlage', badge: 'GRUNDLAGE', color: '#0090d0', test: (w) => { const s = wStats(w.steps); return !(s.avg <= 58 && s.high < 0.02) && s.high < 0.05 && s.share[2] < 0.25; } },
-  { id: 'sweetspot', title: 'Tempo & Sweet Spot', badge: 'TEMPO & SWEET SPOT', color: '#00be55', test: (w) => { const s = wStats(w.steps); return s.share[2] >= 0.2 || s.between(84, 97) >= 0.2; } },
-  { id: 'threshold', title: 'Schwelle', badge: 'SCHWELLE', color: '#f9c600', test: (w) => wStats(w.steps).between(95, 106) >= 0.15 },
-  { id: 'vo2', title: 'VO2max & Sprint', badge: 'VO2MAX & SPRINT', color: '#e41f1f', test: (w) => { const s = wStats(w.steps); return s.share[4] + s.share[5] >= 0.06; } },
-];
+const typeTitle = (id) => state.wcats.find((c) => c.id === id)?.title || id;
 // Alle Kategorien: automatische (nach Dauer/Intensität) und eigene (manuell zugeordnet).
 function allCats() {
-  const auto = AUTO_CATS.map((c) => ({ ...c, custom: false, list: state.workouts.filter(c.test) })).filter((c) => c.list.length);
+  // Automatische Kategorien kommen vom Server (Titel, Farbe) und ordnen über die Felder durationCat und type ein.
+  const auto = state.wcats.map((c) => ({
+    id: c.id, title: c.title, badge: c.badge, color: c.color, custom: false, kind: c.kind,
+    list: state.workouts.filter((w) => (c.kind === 'duration' ? w.durationCat : w.type) === c.id),
+  })).filter((c) => c.kind === 'type' || c.list.length); // Trainingsarten immer zeigen, damit man dort importieren kann
   const custom = state.cats.map((c) => ({
     id: c.id, title: c.name, badge: c.name, color: '#2979ff', custom: true,
     list: state.workouts.filter((w) => c.workoutIds.includes(w.id)),
@@ -314,7 +292,7 @@ function renderWorkouts() {
         <div class="row"><button class="ghost" id="backC">← Kategorien</button><h3 style="margin:0;flex:1">${esc(cat.title)}</h3>
           ${cat.custom ? '<button class="small" id="renC">Umbenennen</button><button class="small danger" id="delC">Löschen</button>' : ''}</div>
         <div class="row"><button class="primary" id="newW">+ Neues Workout</button>
-          <button class="ghost" id="impW" title="Mehrere Garmin-Workout-Dateien auf einmal wählen${cat.custom ? '; sie landen in dieser Kategorie' : ''}">FIT importieren${cat.custom ? ' in diese Kategorie' : ''}</button>
+          <button class="ghost" id="impW" title="Mehrere Garmin-Workout-Dateien auf einmal wählen${cat.custom || cat.kind === 'type' ? '; sie landen in dieser Kategorie' : ''}">FIT importieren${cat.custom || cat.kind === 'type' ? ' in diese Kategorie' : ''}</button>
           <input type="file" id="fitIn" accept=".fit" multiple hidden>
           <button class="ghost" id="selW">${state.selMode ? 'Auswahl beenden' : 'Auswählen'}</button>
           ${cat.custom ? '<button class="ghost" id="assignC">Workouts zuordnen</button>' : ''}</div>
@@ -333,7 +311,12 @@ function renderWorkouts() {
       <div class="card">${sel ? `
         <h2>${esc(sel.name)} ${sel.builtIn ? '<span class="chip">eingebaut</span>' : ''}</h2>
         <div class="muted">${esc(sel.description)}</div>
-        <div class="row catrow"><span class="muted">Kategorien:</span>${state.cats.length ? state.cats.map((c) => `<label><input type="checkbox" data-asg="${esc(c.id)}" ${c.workoutIds.includes(sel.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('') : '<span class="muted">noch keine eigenen, oben „+ Kategorie“ anlegen</span>'}</div>
+        <div class="row"><span class="muted">Trainingsart:</span>
+          <select id="typeSel">
+            <option value="">Automatisch (${esc(typeTitle(sel.autoType))})</option>
+            ${state.wcats.filter((c) => c.kind === 'type').map((c) => `<option value="${esc(c.id)}" ${sel.pinned && sel.type === c.id ? 'selected' : ''}>${esc(c.title)}</option>`).join('')}
+          </select>${sel.pinned ? '<span class="chip">festgelegt</span>' : ''}</div>
+        <div class="row catrow"><span class="muted">Eigene Kategorien:</span>${state.cats.length ? state.cats.map((c) => `<label><input type="checkbox" data-asg="${esc(c.id)}" ${c.workoutIds.includes(sel.id) ? 'checked' : ''}> ${esc(c.name)}</label>`).join('') : '<span class="muted">noch keine eigenen, oben „+ Kategorie“ anlegen</span>'}</div>
         <div class="row"><span>${fmtDur(totalSec(sel.steps))}</span><span class="muted">Ø ${Math.round((avgPct(sel.steps) * ftp) / 100)} W bei FTP ${ftp} W (${esc(state.user.name)})</span></div>
         <canvas id="wchart"></canvas>
         <div class="row">
@@ -364,6 +347,10 @@ function renderWorkouts() {
     });
     $('#assignC').onclick = () => { state.assign = own.id; render(); };
   }
+  if ($('#typeSel')) $('#typeSel').onchange = guard(async (e) => {
+    await api('PUT', `/api/workouts/${encodeURIComponent(sel.id)}/type`, { type: e.target.value || null });
+    state.workouts = await api('GET', '/api/workouts'); render();
+  });
   document.querySelectorAll('[data-asg]').forEach((cb) => (cb.onchange = guard(async () => {
     const c = state.cats.find((x) => x.id === cb.dataset.asg);
     const ids = cb.checked ? [...c.workoutIds, sel.id] : c.workoutIds.filter((x) => x !== sel.id);
@@ -419,7 +406,7 @@ function bindWorkoutHeader() {
     let lastId = null;
     for (const f of files) {
       try {
-        const catQ = state.cats.some((c) => c.id === state.wcat) ? `&category=${encodeURIComponent(state.wcat)}` : '';
+        const catQ = state.cats.some((c) => c.id === state.wcat) || state.wcats.some((c) => c.kind === 'type' && c.id === state.wcat) ? `&category=${encodeURIComponent(state.wcat)}` : '';
         const res = await fetch(`/api/workouts/import-fit?ftp=${encodeURIComponent(state.user.ftp)}&name=${encodeURIComponent(f.name)}${catQ}`, {
           method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: await f.arrayBuffer(),
         });

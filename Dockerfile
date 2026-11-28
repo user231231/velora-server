@@ -1,6 +1,6 @@
 FROM node:22-alpine
 WORKDIR /app
-COPY package.json server.js seed.js fit.js ./
+COPY package.json server.js seed.js fit.js classify.js ./
 COPY web ./web
 ENV NODE_ENV=production DATA_DIR=/data PORT=8080
 VOLUME /data

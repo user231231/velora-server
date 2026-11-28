@@ -340,3 +340,36 @@ test('FIT-Import: Duplikate erkennen und Kategorie zuweisen', async () => {
   assert.deepEqual((await call('GET', '/api/categories')).data.find((x) => x.id === cat.id).workoutIds, []);
   assert.equal((await call('POST', '/api/categories/bulk-delete', { ids: [cat.id, 'x'] })).data.deleted, 1);
 });
+
+test('Einordnung: Kategorien, Felder und manuelle Trainingsart', async () => {
+  const cats = (await call('GET', '/api/workout-categories')).data;
+  assert.ok(cats.some((c) => c.id === 'endurance' && c.title === 'Ausdauer'));
+  assert.ok(cats.some((c) => c.id === 'dur30'));
+  const list = (await call('GET', '/api/workouts')).data;
+  assert.ok(list.every((w) => w.type && w.autoType && w.durationCat && w.pinned === false));
+  const w = list[0];
+  const pinned = (await call('PUT', `/api/workouts/${w.id}/type`, { type: 'recovery' })).data;
+  assert.equal(pinned.type, 'recovery');
+  assert.equal(pinned.pinned, true);
+  assert.equal(pinned.autoType, w.autoType);
+  assert.equal((await call('PUT', `/api/workouts/${w.id}/type`, { type: 'quatsch' })).status, 400);
+  const back = (await call('PUT', `/api/workouts/${w.id}/type`, { type: null })).data;
+  assert.equal(back.pinned, false);
+  assert.equal(back.type, w.autoType);
+});
+
+test('FIT-Import in eine Trainingsart legt sie fest, auch bei Duplikaten', async () => {
+  const mk = (dv) => fitWorkout([{ dt: 0, dv, tt: 4, lo: 50, hi: 70, int: 0 }, { dt: 0, dv: 400000, tt: 4, lo: 1240, hi: 1260, int: 0 }], 'Typtest');
+  const a = (await call('POST', '/api/workouts/import-fit?ftp=250&name=t1.fit&category=sweetspot', mk(555000))).data;
+  assert.equal(a.pinned, true);
+  assert.equal(a.type, 'sweetspot');
+  const b = (await call('POST', '/api/workouts/import-fit?ftp=250&name=t2.fit&category=threshold', mk(555000))).data;
+  assert.equal(b.duplicate, true);
+  assert.equal(b.type, 'threshold');
+  // Dauerkategorie: nichts festlegen
+  const c = (await call('POST', '/api/workouts/import-fit?ftp=250&name=t3.fit&category=dur60', mk(666000))).data;
+  assert.equal(c.pinned, false);
+  // Bearbeiten behält die Festlegung
+  const e = (await call('PUT', `/api/workouts/${a.id}`, { name: 'Neu', description: '', steps: a.steps })).data;
+  assert.equal(e.pinned, true);
+});
